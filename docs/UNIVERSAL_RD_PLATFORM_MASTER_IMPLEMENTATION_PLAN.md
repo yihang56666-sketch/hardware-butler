@@ -14,9 +14,9 @@
 
 ## 1. How Another AI Must Use This Plan
 
-This is a program-level plan, not one oversized coding task. It contains twelve
-sequential phases. Each phase must produce working software, tests, documentation,
-and a Git commit before the next phase begins.
+This is a program-level plan, not one oversized coding task. It contains nineteen
+sequential phases, numbered 0 through 18. Each phase must produce working software,
+tests, documentation, and a Git commit before the next phase begins.
 
 Execution rules:
 
@@ -58,8 +58,66 @@ feat: add modular desktop workbench
 feat: connect initial rd platform adapters
 feat: add adapter sdk packaging and diagnostics
 feat: add local api and remote node protocol
-docs: complete universal platform release workflow
+feat: harden platform migration and recovery
+docs: complete universal platform beta workflow
+feat: add maintained cross-platform rd adapters
+feat: add instruments industrial and motion workflows
+feat: add production web and cloud collaboration
+feat: add governed multi-agent collaboration
+feat: add product updates diagnostics and quality gates
+release: qualify NextBoard 1.0
 ```
+
+### Mandatory TDD Loop Inside Every Task
+
+Each task in every phase expands into these exact execution steps. The implementing AI
+must copy the task into its tracker and record command output at RED and GREEN:
+
+1. Create or extend the exact test file named by the task with one behavior-focused
+   test. Prefer real domain/service objects; use fakes only for network, subprocess,
+   clock, credential store, AI provider, or physical hardware boundaries.
+2. Run the narrowest node, for example:
+   `pytest path/to/test_file.py::test_behavior -v --no-cov`.
+3. Confirm it fails because the required behavior is absent. Import/syntax/fixture errors
+   are not valid RED; fix the test harness until the assertion fails for the intended
+   reason.
+4. Implement the smallest production change in the task-owned files. Do not implement
+   another task or phase opportunistically.
+5. Re-run the narrow test and require PASS.
+6. Run the entire owning test file and require PASS.
+7. Run the phase verification command and require PASS or document a pre-existing
+   baseline failure with unchanged reproduction.
+8. Run Ruff on changed Python files, mypy on changed `tools/` modules, and
+   `git diff --check`.
+9. Review `git diff` for secrets, absolute private paths, generated files, ownership
+   violations, weakened safety conditions, and accidental API/schema drift.
+10. Commit only the task's coherent files. Record commit ID, tests, and remaining risks
+    before starting the next task.
+
+### Required Phase Handoff Record
+
+At every phase gate, create a review note in the pull request, task log, or
+`docs/platform/execution/phase-XX.md` containing:
+
+```markdown
+# Phase XX Verification
+- Scope delivered:
+- Commits:
+- Files added/changed:
+- RED tests observed:
+- Focused tests:
+- Regression tests:
+- Manual/read-only acceptance:
+- Hardware tests: passed / failed / not-run, with exact reason
+- Security/privacy checks:
+- Performance observations:
+- Known limitations:
+- Rollback procedure:
+- Gate result: pass / blocked
+```
+
+Do not commit execution notes containing usernames, private paths, credentials, tokens,
+proprietary source, or raw device payloads.
 
 ## 2. Non-Negotiable Ownership Boundaries
 
@@ -1068,10 +1126,11 @@ tasks recover honestly, and bounded discovery respects limits. Commit
 
 ---
 
-# Phase 12: Documentation, Packaging, Release, and Final Acceptance
+# Phase 12: Beta Integration, Packaging, and Acceptance
 
-**Outcome:** A mature release that a beginner can start, an expert can automate, and a
-maintainer can extend and verify.
+**Outcome:** A distributable Beta foundation that a beginner can start, an expert can
+automate, and a maintainer can extend and verify before broader product domains are
+added in Phases 13-17.
 
 **Files:**
 - Modify: `README.md`
@@ -1139,9 +1198,9 @@ specific flash/debug/observe checks. Record board, probe, firmware hash, voltage
 evidence, backend identity, confirmation, outcome, and recovery. Absence of hardware is
 reported `not-run`.
 
-### Task 12.6: Release decision
+### Task 12.6: Beta decision
 
-Release only when:
+Mark the platform foundation Beta only when:
 
 - all automated gates pass;
 - migration dry-run and restore are verified;
@@ -1153,9 +1212,428 @@ Release only when:
 - version is updated consistently in `pyproject.toml`, package metadata, GUI, plugin,
   and docs.
 
-Commit `docs: complete universal platform release workflow`, then follow the repository
-release process. Do not push, publish, tag, or create a remote release without explicit
-user approval.
+Commit `docs: complete universal platform beta workflow`. Do not describe this gate as
+the mature 1.0 product: concrete platform breadth, instruments, Web/cloud, multi-agent
+collaboration, and product operations are completed in the following phases. Do not
+push, publish, tag, or create a remote release without explicit user approval.
+
+---
+
+# Phase 13: Concrete MCU, FPGA, Linux, and Edge Platform Adapters
+
+**Outcome:** The product is demonstrably broader than STM32 and vision boards, with
+maintained adapters for representative ecosystems rather than empty extension points.
+
+**Files:**
+- Create: `tools/platform/adapters/esp_idf.py`
+- Create: `tools/platform/adapters/arduino.py`
+- Create: `tools/platform/adapters/platformio.py`
+- Create: `tools/platform/adapters/riscv.py`
+- Create: `tools/platform/adapters/fpga.py`
+- Create: `tools/platform/adapters/linux_board.py`
+- Create: `tests/contract/adapters/test_esp_idf_adapter.py`
+- Create: `tests/contract/adapters/test_arduino_platformio_adapters.py`
+- Create: `tests/contract/adapters/test_riscv_adapter.py`
+- Create: `tests/contract/adapters/test_fpga_adapter.py`
+- Create: `tests/contract/adapters/test_linux_board_adapter.py`
+- Create: `tests/fixtures/platform/adapters/esp-idf/`
+- Create: `tests/fixtures/platform/adapters/arduino/`
+- Create: `tests/fixtures/platform/adapters/riscv/`
+- Create: `tests/fixtures/platform/adapters/fpga/`
+- Create: `tests/fixtures/platform/adapters/linux-board/`
+- Create: `docs/platform/supported-platforms.md`
+
+### Task 13.1: ESP-IDF adapter
+
+Detect `CMakeLists.txt`, `sdkconfig`, component manifests, partitions, and `idf.py`
+identity. Provide inspect, target/config summary, build plan, build, flash plan, monitor
+plan, and size diagnostics. Build is automatic only within a registered build directory;
+flash and monitor are confirmed and require exact port/target binding.
+
+Contract acceptance:
+
+```text
+esp-idf.inspect       automatic
+esp-idf.build         automatic
+esp-idf.plan-flash    automatic
+esp-idf.flash         confirmed
+esp-idf.monitor       confirmed
+esp-idf.erase-flash   high-risk
+```
+
+### Task 13.2: Arduino CLI and PlatformIO adapters
+
+Arduino adapter verifies `arduino-cli`, board FQBN, libraries, and sketch root before
+compile/upload. PlatformIO adapter detects `platformio.ini`, environments, frameworks,
+boards, and build targets. Dependency installation and upload require confirmation.
+Never infer a board or port solely from an old build cache.
+
+### Task 13.3: RISC-V adapter
+
+Support generic CMake/Make RISC-V GCC projects plus toolchain identity, ELF inspection,
+OpenOCD/probe-rs plan creation, and target-specific adapter metadata. Initial hardware
+validation selects one available RISC-V fixture or board; unsupported vendor SDKs are
+reported accurately and still retain generic build/inspect capability.
+
+### Task 13.4: FPGA adapter
+
+Detect Verilog/SystemVerilog/VHDL projects and vendor manifests for at least one
+available toolchain. Provide source/top/constraint discovery, lint/synthesis plan,
+resource/timing report indexing, bitstream evidence, and confirmed programming plan.
+Simulation and synthesis are structurally distinct from physical programming. Tool
+licenses and headless availability are health diagnostics, not assumed.
+
+### Task 13.5: Linux board and SBC adapter
+
+Support local Linux projects and explicitly configured SSH targets. Capabilities include
+system profile, build/package plan, file synchronization preview, service/log inspection,
+deployment plan, and rollback plan. Remote execution requires paired target identity,
+host-key verification, scoped command templates, and confirmation. No arbitrary AI-
+generated SSH command is accepted.
+
+### Task 13.6: Platform breadth gate
+
+For each ecosystem, run reusable adapter contracts, a synthetic fixture workflow, and
+one real tool probe when installed. At least four of the five adapter families must
+complete inspect -> plan -> safe execution/evidence in CI or reproducible local tests;
+missing proprietary tools must produce explicit `unavailable`, not false passes.
+
+Verification:
+
+```powershell
+pytest tests/contract/adapters/test_esp_idf_adapter.py tests/contract/adapters/test_arduino_platformio_adapters.py tests/contract/adapters/test_riscv_adapter.py tests/contract/adapters/test_fpga_adapter.py tests/contract/adapters/test_linux_board_adapter.py -v --no-cov
+```
+
+Commit `feat: add maintained cross-platform rd adapters`.
+
+---
+
+# Phase 14: Laboratory Instruments, Industrial Protocols, and Motion Control
+
+**Outcome:** The platform can safely coordinate measurement and controlled physical
+systems through concrete, testable adapters with simulation-first workflows.
+
+**Files:**
+- Create: `tools/platform/instruments/contracts.py`
+- Create: `tools/platform/instruments/scpi.py`
+- Create: `tools/platform/instruments/visa.py`
+- Create: `tools/platform/instruments/modbus.py`
+- Create: `tools/platform/instruments/motion.py`
+- Create: `tools/platform/instruments/interlocks.py`
+- Create: `tools/platform/adapters/instruments.py`
+- Create: `tools/platform/adapters/industrial.py`
+- Create: `tests/unit/platform/test_scpi_policy.py`
+- Create: `tests/unit/platform/test_modbus_policy.py`
+- Create: `tests/unit/platform/test_motion_interlocks.py`
+- Create: `tests/integration/platform/test_instrument_simulators.py`
+- Create: `tests/hardware/test_lab_instruments.py`
+- Create: `docs/platform/instruments-and-motion.md`
+
+### Task 14.1: SCPI and VISA instrument support
+
+Implement discovery and typed command templates for oscilloscopes, power supplies,
+electronic loads, DMMs, and signal generators. Start with `*IDN?`, bounded queries,
+measurement capture, waveform/screenshot evidence, and configuration snapshots. Output
+enable, voltage/current changes, arbitrary waveform upload, calibration, and reset are
+confirmed or high-risk based on adapter policy.
+
+### Task 14.2: Instrument safety profiles
+
+Each registered instrument has model identity, channel capabilities, configured limits,
+load expectations, and safe-off behavior. Commands are typed operations such as
+`SetPowerChannel(voltage_v, current_a, output_enabled)` rather than free-form SCPI.
+Validate units, ranges, slew constraints, channel, and target identity before encoding.
+
+### Task 14.3: Modbus and industrial protocol support
+
+Support read-only register maps, polling plans, decoded evidence, and confirmed writes
+for explicitly configured Modbus TCP/RTU targets. Register type, width, endianness,
+scale, unit, allowed range, and write authority come from a user-approved device profile.
+No broad network scan or guessed register writes.
+
+### Task 14.4: Motion-control contract and interlocks
+
+Define typed operations for home, jog, absolute/relative move, stop, enable, and status.
+Real motion is high-risk unless an adapter proves configured travel limits, units,
+velocity/acceleration limits, emergency stop state, homing state, target identity, and a
+working stop command. Require simulation/digital-twin preview, dry-run path, explicit
+operator confirmation, bounded timeout, and continuous cancellation/stop handling.
+
+### Task 14.5: Simulator-first integration tests
+
+Build deterministic SCPI, Modbus, and motion simulators. Test disconnection, malformed
+responses, over-limit setpoints, stale device identity, emergency-stop activation,
+timeout, cancellation, and evidence capture. Hardware tests remain opt-in and must use
+user-approved bench profiles.
+
+Verification:
+
+```powershell
+pytest tests/unit/platform/test_scpi_policy.py tests/unit/platform/test_modbus_policy.py tests/unit/platform/test_motion_interlocks.py tests/integration/platform/test_instrument_simulators.py -v --no-cov
+```
+
+Phase gate: simulated measurement and motion workflows complete end to end; every
+physical write path is blocked without a registered safety profile and confirmation.
+Commit `feat: add instruments industrial and motion workflows`.
+
+---
+
+# Phase 15: Production Web Console, Cloud Services, Accounts, and Synchronization
+
+**Outcome:** A complete optional Web/cloud product complements local-first desktop use
+without making cloud connectivity mandatory.
+
+**Files:**
+- Create: `web/` frontend application using the repository-selected framework
+- Create: `server/` authenticated API service
+- Create: `tools/platform/cloud/sync.py`
+- Create: `tools/platform/cloud/conflicts.py`
+- Create: `tools/platform/cloud/permissions.py`
+- Create: `tests/e2e/web/`
+- Create: `tests/integration/platform/test_cloud_sync.py`
+- Create: `tests/security/test_tenant_isolation.py`
+- Create: `docs/platform/web-and-cloud.md`
+
+### Task 15.1: Freeze product API and authentication model
+
+Version the API, generate client types from schemas, and define users, organizations,
+workspaces, roles, service identities, sessions, and audit events. Roles: owner, admin,
+engineer, operator, reviewer, and viewer. Hardware execution additionally requires a
+local/node confirmation; cloud role alone is never sufficient.
+
+### Task 15.2: Build the actual Web console
+
+Implement authenticated workspace, project, task, device, evidence, adapter, node, team,
+and settings views. Match desktop operational density and workflows. Include live task
+progress, confirmation routing, evidence preview/download, node health, search, filters,
+empty/loading/error/offline states, responsive layout, keyboard accessibility, and no
+marketing landing page as the signed-in primary experience.
+
+### Task 15.3: Implement opt-in synchronization
+
+Synchronize metadata, settings selected by policy, task summaries, and chosen evidence.
+Source trees and large binaries remain local unless explicitly included. Use version
+vectors or equivalent conflict metadata; surface conflicts instead of last-writer-wins
+loss. Support pause, resume, retry, offline queue, export, and account disconnect.
+
+### Task 15.4: Tenant isolation and secret boundaries
+
+Enforce organization/workspace authorization at every server query. Provider secrets,
+node private keys, local confirmation tokens, and raw hardware credentials never sync.
+Add tenant-isolation, IDOR, session expiry, CSRF/CORS, rate-limit, upload validation, and
+audit-log tests.
+
+### Task 15.5: Deployment and operations
+
+Provide development, self-hosted, and managed deployment configurations; health/readiness
+checks; database migrations; backup/restore; structured logs; metrics; and rollback.
+Do not choose or deploy a paid external service without user approval. Keep local-only
+mode fully supported and visible in tests.
+
+Verification includes backend tests, browser E2E, accessibility scans, responsive
+screenshots, tenant security tests, and an offline local-only regression. Phase gate:
+two test users in separate organizations cannot access each other's data; one user can
+move between desktop and Web task history without syncing secrets/source by default.
+Commit `feat: add production web and cloud collaboration`.
+
+---
+
+# Phase 16: Multi-Agent Orchestration and Team Collaboration
+
+**Outcome:** Complex R&D goals can be decomposed among specialized agents and humans
+with review, budgets, provenance, and the same safety gates as manual tasks.
+
+**Files:**
+- Create: `tools/platform/agents/contracts.py`
+- Create: `tools/platform/agents/roles.py`
+- Create: `tools/platform/agents/orchestrator.py`
+- Create: `tools/platform/agents/review.py`
+- Create: `tools/platform/agents/budgets.py`
+- Create: `tools/platform/agents/memory.py`
+- Create: `tests/unit/platform/test_agent_orchestrator.py`
+- Create: `tests/unit/platform/test_agent_review.py`
+- Create: `tests/integration/platform/test_multi_agent_workflow.py`
+- Create: `docs/platform/multi-agent.md`
+
+### Task 16.1: Define agent roles and permissions
+
+Initial roles: project explorer, firmware engineer, hardware architect, vision engineer,
+host/cloud engineer, lab operator, safety reviewer, and release reviewer. Each role has
+read scopes, allowed proposal types, disallowed capabilities, model profile selection,
+time/token/tool budgets, and required reviewers.
+
+### Task 16.2: Implement goal decomposition into typed work items
+
+The orchestrator decomposes a goal into dependency-linked tasks that reference registered
+projects, capabilities, evidence, expected outputs, and acceptance tests. Agents propose
+plans and artifacts; they never receive blanket shell or hardware authority.
+
+### Task 16.3: Add independent review and conflict resolution
+
+Mutating code/config proposals require test evidence. Hardware plans require safety
+review. Conflicting conclusions are retained with provenance and surfaced to a human;
+the orchestrator does not conceal disagreement. Require review before merging agent
+outputs into an executable task plan.
+
+### Task 16.4: Add resumable execution and audit
+
+Persist agent runs, prompts after redaction, model/provider identity, tool calls,
+artifacts, decisions, costs/usage when available, failures, handoffs, and approvals.
+Resume only from committed task state; do not replay non-idempotent hardware operations.
+
+### Task 16.5: Human collaboration
+
+Implement comments, assignments, review requests, approval queues, task ownership,
+notifications, and audit history in desktop/Web clients. Notifications must not expose
+secrets or proprietary evidence content.
+
+Phase gate: a cross-domain fixture goal is decomposed, analyzed by at least three fake
+role agents, reviewed, converted into tasks, and completed in simulation while a
+malicious agent command and unauthorized hardware action are rejected. Commit
+`feat: add governed multi-agent collaboration`.
+
+---
+
+# Phase 17: Product Operations, Updates, Supportability, and Quality SLOs
+
+**Outcome:** The product can be installed, upgraded, diagnosed, supported, and improved
+without requiring its author to manually repair each machine.
+
+**Files:**
+- Create: `tools/platform/updates.py`
+- Create: `tools/platform/diagnostics.py`
+- Create: `tools/platform/telemetry.py`
+- Create: `tools/platform/support_bundle.py`
+- Create: `tests/integration/platform/test_upgrade_paths.py`
+- Create: `tests/unit/platform/test_support_bundle_redaction.py`
+- Create: `tests/performance/test_product_slos.py`
+- Create: `docs/platform/support.md`
+- Create: `docs/platform/quality-slos.md`
+- Create: `docs/platform/privacy.md`
+
+### Task 17.1: Installer, updater, and rollback
+
+Produce signed/versioned installation artifacts where the release environment permits.
+Support clean install, in-place upgrade, migration preview, backup, rollback to the
+previous compatible version, uninstall that preserves user data by default, and a
+portable local mode. Failed update must leave the prior runnable version intact.
+
+### Task 17.2: Diagnostics and support bundles
+
+Add one-click/CLI diagnostics for version, schema, adapters, tools, devices, node health,
+permissions, recent normalized failures, and package integrity. Support bundles are
+previewable, redact secrets/tokens/usernames/private paths where configured, exclude
+source files by default, and require explicit user creation.
+
+### Task 17.3: Privacy-preserving product analytics
+
+Telemetry is off by default. If explicitly enabled, collect only documented coarse
+events and performance/error aggregates; never collect source, prompts, evidence body,
+device payloads, secrets, or absolute paths. Provide local event preview, retention,
+export, and delete controls.
+
+### Task 17.4: Define and enforce quality SLOs
+
+Measure on a documented reference machine:
+
+- cold desktop startup and workspace render;
+- cancellation response for scans/tasks;
+- discovery throughput and memory bound;
+- task/event persistence latency;
+- crash-free automated workflow rate;
+- API availability under integration load;
+- sync recovery after network interruption;
+- installer/upgrade success across supported Windows versions.
+
+Set release thresholds from measured Beta baselines, record machine and dataset, and
+fail release verification when a threshold regresses beyond its documented tolerance.
+
+### Task 17.5: Support and compatibility policy
+
+Publish supported OS/Python/tool versions, adapter support levels, deprecation windows,
+database migration policy, plugin compatibility matrix, security reporting path, backup
+expectations, and release channels (stable/beta). Automate checks that docs and package
+metadata agree.
+
+Phase gate: clean install, upgrade from Beta, forced failed migration rollback, support
+bundle generation, telemetry-off validation, and quality SLO suite all pass. Commit
+`feat: add product updates diagnostics and quality gates`.
+
+---
+
+# Phase 18: Mature Product 1.0 Release and End-to-End Qualification
+
+**Outcome:** A supportable NextBoard 1.0 product, not merely an extensible technical
+foundation.
+
+**Files:**
+- Modify all release/version files from Phase 12
+- Create: `docs/platform/1.0-qualification.md`
+- Create: `docs/platform/known-limitations.md`
+- Create: `tests/acceptance/test_product_1_0.py`
+- Create: `tests/acceptance/test_beginner_journey.py`
+- Create: `tests/acceptance/test_professional_journey.py`
+- Create: `tests/acceptance/test_team_journey.py`
+
+### Task 18.1: Run persona journeys
+
+Beginner journey: install -> create workspace -> discover a project -> inspect -> receive
+clear next action -> build/diagnose -> find evidence, without CLI knowledge.
+
+Professional journey: configure multiple roots/tools/models -> run repeatable CLI/API
+workflow -> review plan -> execute confirmed hardware simulation/approved bench action ->
+export evidence -> create a custom adapter.
+
+Team journey: create organization -> assign task -> coordinate agents/humans -> review
+and approve -> execute on trusted node -> inspect audit/evidence -> recover from failure.
+
+### Task 18.2: Run domain qualification matrix
+
+Qualify STM32, ESP-IDF, Arduino/PlatformIO, one RISC-V path, one FPGA path, Linux/SBC,
+MaixCAM/OpenMV, generic Python/CMake, EDA/BOM review, serial, CAN, network/SSH, SCPI/VISA,
+Modbus, and motion simulation. Each domain must state support level and pass its contract;
+domains requiring unavailable proprietary tools may be `limited` but cannot be called
+fully supported.
+
+### Task 18.3: Run security, privacy, recovery, and compatibility gates
+
+Execute all unit/integration/contract/E2E/security/performance/package tests; clean-
+machine installer tests; upgrade and rollback; backup/restore; secret scan; tenant
+isolation; confirmation replay; plugin quarantine; node trust; offline operation; and
+crash recovery. Resolve every severity-1/2 issue and document accepted lower-severity
+limitations with owner and target release.
+
+### Task 18.4: Conduct controlled hardware qualification
+
+Use only available, user-approved lab hardware. For each tested target, record exact
+device/probe/instrument identity, versions, artifacts, electrical limits, confirmation,
+result, and recovery. Untested hardware is labeled unverified. Demonstrate emergency
+stop/cancellation for any approved motion test before normal motion qualification.
+
+### Task 18.5: Final product truth audit
+
+Cross-check GUI, CLI help, API schema, adapter metadata, README, capability matrix,
+installer, plugin package, changelog, privacy statement, and known limitations. Every
+visible claim must map to a passing test or an explicitly labeled support level.
+
+### Task 18.6: 1.0 release gate
+
+1.0 is eligible only when:
+
+- beginner, professional, and team journeys pass;
+- local-only mode, optional cloud mode, and no-AI mode all pass;
+- required quality SLOs pass on documented machines;
+- supported adapter families pass contracts and qualification;
+- installer, upgrade, rollback, backup, restore, and uninstall pass;
+- no unresolved severity-1/2 correctness, safety, security, or data-loss issue remains;
+- simulation, limited, unverified, and hardware-verified states are truthful everywhere;
+- support, privacy, security, migration, and known-limitations docs are complete;
+- release artifacts contain no credentials, user state, private paths, or proprietary
+  fixtures;
+- explicit user approval is obtained before tag, push, publication, or deployment.
+
+Commit `release: qualify NextBoard 1.0` only after the complete verification output is
+fresh. Publication remains a separate user-approved external action.
 
 ---
 
@@ -1164,16 +1642,23 @@ user approval.
 | Risk | Required test level | Required phases |
 | --- | --- | --- |
 | Domain/state transition | unit | 1, 5 |
-| SQLite migration/rollback | unit + integration | 1, 6, 10, 11 |
-| Adapter compatibility | reusable contract | 2, 8, 9 |
-| SDK/IDE false positives | fixture + real read-only acceptance | 3, 12 |
-| Command construction | unit with argument arrays | 3, 5, 8 |
-| Secret/token leakage | unit + security scan | 5, 6, 10, 11, 12 |
-| Hardware authority bypass | adversarial integration | 5, 8, 10, 11 |
-| GUI responsiveness | view-model + UI smoke | 7, 12 |
+| SQLite migration/rollback | unit + integration | 1, 6, 10, 11, 15, 17, 18 |
+| Adapter compatibility | reusable contract | 2, 8, 9, 13, 14, 18 |
+| SDK/IDE false positives | fixture + real read-only acceptance | 3, 12, 18 |
+| Command construction | unit with argument arrays | 3, 5, 8, 13, 14 |
+| Secret/token leakage | unit + security scan | 5, 6, 10, 11, 12, 15, 16, 17, 18 |
+| Hardware authority bypass | adversarial integration | 5, 8, 10, 11, 13, 14, 16, 18 |
+| GUI responsiveness | view-model + UI smoke | 7, 12, 15, 18 |
+| Web accessibility/responsiveness | browser E2E + screenshots | 15, 18 |
+| Tenant and role isolation | integration + security | 15, 16, 18 |
+| Multi-agent governance | deterministic fake-agent integration | 16, 18 |
+| Instrument and motion interlocks | simulator + opt-in hardware | 14, 18 |
+| Installer/update/rollback | clean-machine acceptance | 12, 17, 18 |
+| Backup/restore/data retention | integration + disaster recovery | 11, 15, 17, 18 |
+| Quality SLO regression | performance benchmark | 11, 17, 18 |
 | Legacy CLI regression | existing suite | 4 onward |
-| Plugin package drift | package validation | 9, 12 |
-| Real hardware | opt-in hardware tests | 8, 12 |
+| Plugin package drift | package validation | 9, 12, 13, 14, 18 |
+| Real hardware | opt-in hardware tests | 8, 12, 13, 14, 18 |
 
 ## 7. Definition of Done for Every Phase
 
@@ -1193,14 +1678,16 @@ A phase is complete only when all statements are true:
 
 ## 8. Global Acceptance Criteria
 
-The complete program is accepted when:
+The mature 1.0 product is accepted only after Phase 18 when:
 
 1. A new user creates a local workspace, selects roots, reviews candidates, registers a
    project, runs inspection/build or deterministic diagnosis, and finds all evidence
    from the desktop UI without knowing CLI commands.
 2. An expert performs the equivalent workflow through stable JSON CLI/API contracts.
-3. STM32, CMake C/C++, Python, MaixCAM/OpenMV, EDA documents, and serial/CAN/network
-   capability descriptors coexist without any platform assumptions in the kernel.
+3. STM32, ESP-IDF, Arduino/PlatformIO, generic RISC-V, at least one FPGA flow,
+   Linux/SBC, CMake C/C++, Python, MaixCAM/OpenMV, EDA documents, serial, CAN,
+   network/SSH, SCPI/VISA, Modbus, and motion simulation coexist without platform
+   assumptions in the kernel and have explicit support levels.
 4. Tool identity is evidence-based and the Java `jlink.exe` regression is fixed.
 5. AI is entirely user-configured and optional; disabling it preserves core behavior.
 6. Mutating and hardware actions cannot bypass typed plans, policy, fresh confirmation,
@@ -1214,6 +1701,36 @@ The complete program is accepted when:
 11. Local API and trusted nodes exchange typed capability requests, never arbitrary
     remote shell commands.
 12. Packaging contains no user state or secrets and passes clean-install validation.
+13. Desktop and Web clients implement equivalent primary workflows with accessible,
+    responsive, non-blocking interfaces and complete empty/loading/error/offline states.
+14. Optional cloud synchronization preserves local-first operation, excludes source and
+    secrets by default, surfaces conflicts, and enforces tenant/role isolation.
+15. Multi-agent work is bounded by roles, budgets, evidence, independent review, human
+    approvals, and the same capability/safety system as manual work.
+16. Instrument, industrial, and motion actions use typed operations, configured limits,
+    interlocks, simulation, cancellation, confirmation, and audit rather than raw model
+    commands.
+17. Clean install, upgrade, failed-upgrade rollback, backup/restore, uninstall, portable
+    mode, diagnostics, and redacted support bundle workflows pass on supported systems.
+18. Telemetry remains off by default, is inspectable/deletable when enabled, and never
+    includes source, prompts, evidence bodies, device payloads, secrets, or absolute
+    paths.
+19. Beginner, professional, and team end-to-end journeys pass against packaged builds,
+    not only source checkouts.
+20. No severity-1/2 correctness, safety, security, privacy, or data-loss issue remains;
+    lower-severity limitations are documented with support level and ownership.
+
+### Product Completion Levels
+
+| Gate | Meaning | May be called mature product? |
+| --- | --- | --- |
+| Phase 4 | Headless workspace foundation | No |
+| Phase 8 | Useful local multi-domain alpha | No |
+| Phase 12 | Installable Beta foundation | No |
+| Phase 14 | Broad hardware/lab Beta | No |
+| Phase 16 | Collaborative platform release candidate | Not yet |
+| Phase 17 | Operationally supportable release candidate | Not yet |
+| Phase 18 | Qualified NextBoard 1.0 | Yes, only if every Phase 18 gate passes |
 
 ## 9. Explicitly Prohibited Shortcuts
 
@@ -1229,6 +1746,12 @@ The complete program is accepted when:
 - Do not manually maintain the plugin's copied source tree.
 - Do not claim broad ESP32/FPGA/Linux/instrument support until concrete adapters pass the
   same contract and acceptance gates.
+- Do not call Phase 12 or any earlier milestone the finished mature product.
+- Do not make cloud accounts, telemetry, or AI providers mandatory for local workflows.
+- Do not expose raw SCPI, Modbus writes, motion commands, SSH commands, or agent-generated
+  command strings as a shortcut around typed capabilities.
+- Do not declare 1.0 while installer rollback, data restore, support diagnostics,
+  beginner/professional/team journeys, or severity-1/2 findings remain incomplete.
 - Do not publish or push as part of implementation without explicit user approval.
 
 ## 10. Handoff Prompt for Another AI
@@ -1238,9 +1761,10 @@ Use this exact instruction with the plan:
 ```text
 Implement NextBoard according to docs/UNIVERSAL_RD_PLATFORM_MASTER_IMPLEMENTATION_PLAN.md.
 Read AGENTS.md and the approved design first. Work in an isolated Git worktree. Execute
-only one numbered phase at a time, using TDD and the listed verification commands. At
+only one numbered phase at a time through Phase 18, using TDD and the listed verification commands. At
 each phase gate, report changed files, tests, unresolved risks, and the next phase; do
 not begin the next phase until the current gate passes. Preserve the independent dirty
-embeddedskills repository and never bypass hardware safety gates. Do not push, publish,
-or operate real hardware without explicit user approval.
+embeddedskills repository and never bypass hardware safety gates. Phase 12 is Beta, not
+the finished product; only Phase 18 may qualify mature 1.0. Do not push, publish, operate
+real hardware, or deploy paid cloud resources without explicit user approval.
 ```
