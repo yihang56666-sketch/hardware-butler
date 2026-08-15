@@ -1,0 +1,131 @@
+{
+  "schema_version": 1,
+  "status": "ok",
+  "part": "STM32F407VGTx",
+  "board": "",
+  "out_dir": "D:\\一些有用的项目\\硬件agent\\tests\\fixtures\\cubemx-basic\\docs\\chip\\STM32F407VGTx",
+  "documents_dir": "D:\\一些有用的项目\\硬件agent\\tests\\fixtures\\cubemx-basic\\docs\\chip\\STM32F407VGTx\\documents",
+  "documents": [],
+  "required_documents": [
+    {
+      "type": "datasheet",
+      "why": "pinout, package, electrical limits, memory, ordering code"
+    },
+    {
+      "type": "reference_manual",
+      "why": "registers, clocks, interrupts, DMA, peripheral behavior"
+    },
+    {
+      "type": "errata",
+      "why": "silicon defects and required workarounds"
+    },
+    {
+      "type": "board_schematic",
+      "why": "actual pin use, power rails, boot straps, debug connector"
+    },
+    {
+      "type": "application_notes",
+      "why": "layout and peripheral-specific implementation notes"
+    }
+  ],
+  "document_coverage": {
+    "schema_version": 1,
+    "status": "incomplete",
+    "generated_at": "2026-08-15T13:18:19.349855+00:00",
+    "required": [
+      {
+        "type": "datasheet",
+        "why": "pinout, package, electrical limits, memory, ordering code",
+        "status": "missing",
+        "found_count": 0,
+        "documents": []
+      },
+      {
+        "type": "reference_manual",
+        "why": "registers, clocks, interrupts, DMA, peripheral behavior",
+        "status": "missing",
+        "found_count": 0,
+        "documents": []
+      },
+      {
+        "type": "errata",
+        "why": "silicon defects and required workarounds",
+        "status": "missing",
+        "found_count": 0,
+        "documents": []
+      },
+      {
+        "type": "board_schematic",
+        "why": "actual pin use, power rails, boot straps, debug connector",
+        "status": "missing",
+        "found_count": 0,
+        "documents": []
+      },
+      {
+        "type": "application_notes",
+        "why": "layout and peripheral-specific implementation notes",
+        "status": "missing",
+        "found_count": 0,
+        "documents": []
+      }
+    ],
+    "missing": [
+      "datasheet",
+      "reference_manual",
+      "errata",
+      "board_schematic",
+      "application_notes"
+    ]
+  },
+  "provider_search_hints": [
+    {
+      "provider": "st",
+      "vendor": "STMicroelectronics",
+      "source_quality": "official-search",
+      "url": "https://www.st.com/en/search.html#q=STM32F407VGTx-t=resources-page=1"
+    },
+    {
+      "provider": "st",
+      "vendor": "STMicroelectronics",
+      "source_quality": "official-search",
+      "url": "https://www.st.com/resource/en/datasheet/stm32f407vgtx.pdf"
+    },
+    {
+      "provider": "nxp",
+      "vendor": "NXP",
+      "source_quality": "official-search",
+      "url": "https://www.nxp.com/search?keyword=STM32F407VGTx"
+    },
+    {
+      "provider": "ti",
+      "vendor": "Texas Instruments",
+      "source_quality": "official-search",
+      "url": "https://www.ti.com/product/STM32F407VGTX"
+    },
+    {
+      "provider": "ti",
+      "vendor": "Texas Instruments",
+      "source_quality": "official-search",
+      "url": "https://www.ti.com/lit/gpn/stm32f407vgtx"
+    },
+    {
+      "provider": "infineon",
+      "vendor": "Infineon",
+      "source_quality": "official-search",
+      "url": "https://www.infineon.com/cms/en/search.html#!term=STM32F407VGTx"
+    },
+    {
+      "provider": "gd",
+      "vendor": "GigaDevice",
+      "source_quality": "official-search",
+      "url": "https://www.gd32mcu.com/en/search?keyword=STM32F407VGTx"
+    },
+    {
+      "provider": "microchip",
+      "vendor": "Microchip",
+      "source_quality": "official-search",
+      "url": "https://www.microchip.com/en-us/search?searchQuery=STM32F407VGTx"
+    }
+  ],
+  "generated_at": "2026-08-15T13:18:19.349891+00:00"
+}

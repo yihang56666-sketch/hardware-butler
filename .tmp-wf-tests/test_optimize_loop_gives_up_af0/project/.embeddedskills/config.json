@@ -1,0 +1,13 @@
+{
+  "workflow": {
+    "preferred_build": "keil",
+    "preferred_flash": "auto",
+    "preferred_debug": "auto",
+    "preferred_observe": "auto"
+  },
+  "keil": {
+    "project": "Blinky.uvprojx",
+    "target": "Blinky",
+    "log_dir": ".embeddedskills/build"
+  }
+}

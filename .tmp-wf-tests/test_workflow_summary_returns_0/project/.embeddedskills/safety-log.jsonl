@@ -1,0 +1,1 @@
+{"action": "build-flash", "backend": "", "event": "goal-token-use", "max_uses": 5, "schema_version": 1, "timestamp": "2026-08-15T17:39:32.184033+00:00", "token_hash": "9ff2f6d8f25c1f1a22ab3eab6d62a5ecd174c182ed0dd58da848bb8f766eb1d7", "use_count": 1, "workflow_id": "wf-20260815-173931-e45e74"}

@@ -475,6 +475,42 @@ def _stage_datasheet_collect(
     except Exception:  # noqa: BLE001
         pass
 
+    # P3: try web_fetcher (DuckDuckGo HTML scrape, no API key) before
+    # falling back to LLM task package. If web_fetcher saves at least one
+    # file, stage completes; otherwise falls through to host-agent task.
+    try:
+        import web_fetcher
+        adapter = _get_vendor_adapter(state)
+        if adapter:
+            queries = adapter.datasheet_queries(part)
+        else:
+            queries = [
+                f"{part} datasheet pdf",
+                f"{part} reference manual",
+                f"{part} development board schematic",
+                f"{part} pinout alternate functions",
+            ]
+        datasheet_dir = root / ".hardware-butler" / "datasheets"
+        fetch_result = web_fetcher.search_and_fetch(queries, datasheet_dir, max_files=5)
+        if fetch_result["saved_count"] > 0:
+            return StageResult(
+                status="completed",
+                evidence={
+                    "part": part,
+                    "datasheet_fetched": True,
+                    "evidence_source": "web-fetcher-duckduckgo",
+                    "queries": queries,
+                    "results": fetch_result["results"],
+                    "saved_count": fetch_result["saved_count"],
+                    "errors": fetch_result["errors"],
+                    "datasheet_dir": str(datasheet_dir),
+                },
+            )
+        # If web_fetcher saved nothing, continue to host-agent task fallback
+        web_fetch_errors = fetch_result["errors"]
+    except Exception as exc:  # noqa: BLE001
+        web_fetch_errors = [{"reason": f"web_fetcher failed: {exc}"}]
+
     search_task_path = root / ".hardware-butler" / "search-tasks.json"
     search_task_path.parent.mkdir(parents=True, exist_ok=True)
     search_task = {
@@ -488,6 +524,7 @@ def _stage_datasheet_collect(
             f"{part} pinout alternate functions",
         ],
         "evidence_output_path": str(evidence_path),
+        "web_fetcher_errors": web_fetch_errors,
         "instruction": (
             "Use web_search for each query, open_url to fetch the most relevant "
             "datasheet URL, extract key electrical parameters (Vdd, package, "
