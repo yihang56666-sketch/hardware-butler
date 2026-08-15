@@ -259,7 +259,9 @@ def run_workflow(root: Path, state: dict[str, Any]) -> dict[str, Any]:
             write_workflow_state(root, state)
             progress = True
             if result.status != "completed":
-                if stage["id"] == "verify-goal" and result.status == "failed" and stage["attempts"] < MAX_STAGE_ATTEMPTS:
+                # P3 Step G: optimize-loop triggers on build failure AND verify-goal
+                # failure. Both need LLM analysis to suggest context patches.
+                if stage["id"] in ("build", "verify-goal") and result.status == "failed" and stage["attempts"] < MAX_STAGE_ATTEMPTS:
                     analysis = _llm_analyze_failure_and_patch(root, state, stage)
                     if analysis.get("status") == "pending":
                         state["status"] = "blocked-needs-input"
@@ -762,21 +764,36 @@ def _get_vendor_adapter(state: dict[str, Any]) -> vendor_adapters.VendorAdapter 
 
 
 def _run_subprocess(cmd: list[str], *, timeout_s: int = 120) -> dict[str, Any]:
-    """Run an argv list via subprocess, return structured result."""
+    """Run an argv list via subprocess, return structured result.
+
+    P3 Step G: distinguish between 'tool not installed' (status=not-installed)
+    and 'tool ran but failed' (status=error). The build stage treats
+    not-installed as plan-only (completed) but error as real failure (failed).
+
+    Uses encoding='utf-8' + errors='replace' to avoid GBK codec crashes on
+    Windows when the subprocess emits non-ASCII bytes (e.g. ARM compiler
+    error messages, PDF binary content).
+    """
     import subprocess
+    if not cmd:
+        return {"status": "not-installed", "returncode": -1, "stdout": "", "stderr": "empty command"}
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_s, check=False)
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True,
+            encoding="utf-8", errors="replace",
+            timeout=timeout_s, check=False,
+        )
         status = "ok" if proc.returncode == 0 else "error"
         return {
             "status": status,
             "returncode": proc.returncode,
-            "stdout": proc.stdout[-4000:],
-            "stderr": proc.stderr[-4000:],
+            "stdout": (proc.stdout or "")[-4000:],
+            "stderr": (proc.stderr or "")[-4000:],
         }
     except subprocess.TimeoutExpired:
         return {"status": "timeout", "returncode": -1, "stdout": "", "stderr": f"timeout after {timeout_s}s"}
     except FileNotFoundError as exc:
-        return {"status": "error", "returncode": -1, "stdout": "", "stderr": f"tool not found: {exc.filename}"}
+        return {"status": "not-installed", "returncode": -1, "stdout": "", "stderr": f"tool not found: {exc.filename}"}
     except Exception as exc:  # noqa: BLE001
         return {"status": "error", "returncode": -1, "stdout": "", "stderr": str(exc)}
 
@@ -794,13 +811,17 @@ def _run_embeddedskills_script(script_rel_path: str, args: list[str], *, timeout
         return {"status": "error", "returncode": -1, "stdout": "", "stderr": f"script not found: {script_path}"}
     cmd = ["python", str(script_path)] + args
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_s, check=False)
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True,
+            encoding="utf-8", errors="replace",
+            timeout=timeout_s, check=False,
+        )
         status = "ok" if proc.returncode == 0 else "error"
         return {
             "status": status,
             "returncode": proc.returncode,
-            "stdout": proc.stdout[-4000:],
-            "stderr": proc.stderr[-4000:],
+            "stdout": (proc.stdout or "")[-4000:],
+            "stderr": (proc.stderr or "")[-4000:],
         }
     except subprocess.TimeoutExpired:
         return {"status": "timeout", "returncode": -1, "stdout": "", "stderr": f"timeout after {timeout_s}s"}
@@ -842,8 +863,20 @@ def _stage_build(
             result = _run_subprocess(pio_cmd, timeout_s=300)
             build_log = result.get("stdout", "") + "\n" + result.get("stderr", "")
             build_executed = result["status"] == "ok"
+            # P3 Step G: real compile failure -> stage failed, triggers optimize-loop.
+            # not-installed is treated as plan-only (completed).
+            if result["status"] == "not-installed":
+                return StageResult(
+                    status="completed",
+                    evidence={
+                        "build_plan": plan, "build_executed": False,
+                        "reason": "pio detected at PATH but not actually runnable; plan-only",
+                        "build_backend": "platformio",
+                    },
+                )
+            stage_status = "completed" if build_executed else "failed"
             return StageResult(
-                status="completed",
+                status=stage_status,
                 evidence={
                     "build_plan": plan,
                     "build_executed": build_executed,
@@ -852,7 +885,7 @@ def _stage_build(
                     "build_result": result,
                     "build_log": build_log[-4000:],
                 },
-                error="",
+                error="" if build_executed else f"PlatformIO build failed (exit {result.get('returncode', -1)}); see build_log",
             )
         tools = adapter.detect_tools()
         build_tool_available = any(tools.values())
@@ -865,6 +898,19 @@ def _stage_build(
         result = _run_subprocess(cmd, timeout_s=300)
         build_log = result.get("stdout", "") + "\n" + result.get("stderr", "")
         build_executed = result["status"] == "ok"
+        if result["status"] == "not-installed":
+            return StageResult(
+                status="completed",
+                evidence={
+                    "build_plan": plan, "build_executed": False,
+                    "reason": "adapter build_command tool not runnable; plan-only",
+                    "build_backend": adapter.family,
+                },
+            )
+        # P3 Step G: adapter native build path stays best-effort (completed even
+        # on error). Only PlatformIO build failure triggers optimize-loop, since
+        # adapter native commands may run on partial projects (e.g. cmake on a
+        # directory without CMakeLists.txt).
         return StageResult(
             status="completed",
             evidence={
