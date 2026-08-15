@@ -326,6 +326,21 @@ def _parse_llm_json(text: str) -> dict[str, Any] | None:
         return None
 
 
+def _parse_llm_json_array(text: str) -> list[Any] | None:
+    """Extract a JSON array from an LLM response that may contain prose."""
+    match = _re.search(r"\[[\s\S]*\]", text)
+    if not match:
+        return None
+    try:
+        parsed = json.loads(match.group(0))
+        if isinstance(parsed, list):
+            return parsed
+    except ValueError:
+        pass
+    return None
+
+
+
 def _stage_requirement_parse(
     root: Path,
     ctx: WorkflowContext,
@@ -393,19 +408,29 @@ def _stage_chip_selection(
 ) -> StageResult:
     """Verify or select chip AND detect host backends. The runner does not
     hardcode STM32/Keil — it probes the project artifacts and host tooling to
-    decide which build/flash/observe backends to use."""
+    decide which build/flash/observe backends to use.
+
+    P3: when no part is provided AND CubeMX detection finds none, calls the
+    LLM to generate 3-5 candidate chips based on the goal. Returns
+    blocked-needs-input so the user can re-run with --part <chosen>.
+    """
     detection = cube_detect.detect(root)
     projects = detection.get("cubemx_projects", []) or []
     primary_mcu = projects[0].get("mcu", {}) if projects else {}
     detected_part = primary_mcu.get("name", "") if isinstance(primary_mcu, dict) else ""
     if not ctx.part and not detected_part:
+        candidates = _llm_chip_candidates(root, state)
         return StageResult(
             status="blocked-needs-input",
-            evidence={"detected": detection},
-            error="no chip specified and CubeMX detection found none",
+            evidence={
+                "detected": detection,
+                "candidates": candidates,
+                "instruction": "re-run workflow with --part <chosen chip>",
+            },
+            error="no chip specified and CubeMX detection found none; LLM candidates generated — pick one",
         )
     selected = ctx.part or detected_part
-    backends = backend_detector.detect_backends(root, context_probe=ctx.probe)
+    backends = backend_detector.detect_backends(root, context_probe=ctx.probe, context_part=selected)
     return StageResult(
         status="completed",
         evidence={
@@ -415,6 +440,57 @@ def _stage_chip_selection(
             "backends": backends,
         },
     )
+
+
+def _llm_chip_candidates(root: Path, state: dict[str, Any]) -> list[dict[str, str]]:
+    """Call LLM to generate 3-5 candidate chips based on the goal.
+
+    Returns list of {part, vendor, family, rationale}. On any failure
+    (LLM not configured, parse error, network error) returns empty list —
+    the workflow stage still returns blocked-needs-input, just with no
+    candidates so the user must supply their own.
+    """
+    goal = state.get("goal", "")
+    if not goal:
+        return []
+    try:
+        config = llm_config.load_config(root)
+    except Exception:  # noqa: BLE001
+        return []
+    if not llm_config.is_configured(config):
+        return []
+    system = (
+        "You are an embedded hardware selection assistant. Given a project goal, "
+        "recommend 3-5 candidate microcontrollers. For each, return JSON with "
+        "fields: part (exact part number), vendor (STMicroelectronics/Espressif/TI/Nordic/etc), "
+        "family (stm32/esp32/msp430/ti-tiva/c2000/avr/nordic), rationale (1 sentence why)."
+    )
+    prompt = f"Goal: {goal}\n\nReturn a JSON array of 3-5 candidates."
+    task_id = f"chip-select-{state['workflow_id']}"
+    try:
+        result = llm_client.call_llm(root, config, task_id=task_id, prompt=prompt, system=system)
+    except Exception:  # noqa: BLE001
+        return []
+    if result.get("status") != "ok":
+        return []
+    parsed = _parse_llm_json_array(result["text"])
+    if not isinstance(parsed, list):
+        return []
+    candidates: list[dict[str, str]] = []
+    for item in parsed[:5]:
+        if not isinstance(item, dict):
+            continue
+        part = str(item.get("part", "")).strip()
+        if not part:
+            continue
+        candidates.append({
+            "part": part,
+            "vendor": str(item.get("vendor", "")).strip(),
+            "family": str(item.get("family", "")).strip(),
+            "rationale": str(item.get("rationale", "")).strip(),
+        })
+    return candidates
+
 
 
 def _stage_datasheet_collect(
