@@ -1,0 +1,20 @@
+# Minimal STM32CubeMX-like fixture for hardware butler tooling.
+File.Version=6
+Mcu.Family=STM32F4
+Mcu.Name=STM32F407VGTx
+Mcu.Package=LQFP100
+Mcu.Line=STM32F407/417
+ProjectManager.ProjectName=Blinky
+ProjectManager.TargetToolchain=MDK-ARM V5
+ProjectManager.FirmwarePackage=STM32Cube FW_F4 V1.28.0
+RCC.HSE_VALUE=8000000
+RCC.PLLM=8
+RCC.PLLN=336
+RCC.PLLP=RCC_PLLP_DIV2
+PA13.Signal=SYS_JTMS-SWDIO
+PA14.Signal=SYS_JTCK-SWCLK
+PD12.Signal=GPIO_Output
+PD12.GPIO_Label=LED_GREEN
+USART2.IPParameters=VirtualMode
+USART2.VirtualMode=VM_ASYNC
+FREERTOS.IPParameters=Tasks01

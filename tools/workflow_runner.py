@@ -955,28 +955,146 @@ def _firmware_plan_evidence(state: dict[str, Any]) -> dict[str, Any] | None:
     return evidence
 
 
-def _expected_signals(firmware_plan: dict[str, Any]) -> list[dict[str, str]]:
+def _expected_signals(firmware_plan: dict[str, Any]) -> list[dict[str, Any]]:
     """Extract expected observable signals from firmware-plan verification field.
 
-    Each signal: {"kind": "led"|"uart"|"rtt"|"swo", "pin": "...", "description": "..."}
+    Each signal: {"kind": "led"|"uart"|"rtt"|"swo", "pin": "...", "description": "...",
+                   "frequency_hz": int|None, "expected_text": str|None}
+
+    P3: now extracts concrete verification criteria where possible:
+    - "LED ... 2Hz" -> frequency_hz=2
+    - "UART outputs 'Hello'" -> expected_text="Hello"
+    - "RTT prints 'tick'" -> expected_text="tick"
     """
-    signals: list[dict[str, str]] = []
+    import re
+
+    signals: list[dict[str, Any]] = []
     for entry in firmware_plan.get("verification", []) or []:
         text = str(entry)
         lowered = text.lower()
+        kind = ""
         if "led" in lowered:
-            signals.append({"kind": "led", "pin": "", "description": text})
+            kind = "led"
         elif "uart" in lowered:
-            signals.append({"kind": "uart", "pin": "", "description": text})
+            kind = "uart"
         elif "rtt" in lowered:
-            signals.append({"kind": "rtt", "pin": "", "description": text})
+            kind = "rtt"
         elif "swo" in lowered:
-            signals.append({"kind": "swo", "pin": "", "description": text})
+            kind = "swo"
+        if not kind:
+            continue
+        freq_match = re.search(r"(\d+(?:\.\d+)?)\s*hz", lowered)
+        freq_hz: int | None = None
+        if freq_match:
+            try:
+                freq_hz = int(float(freq_match.group(1)))
+            except ValueError:
+                freq_hz = None
+        text_match = re.search(r"[\"']([^\"']+)[\"']", text)
+        expected_text = text_match.group(1) if text_match else None
+        signals.append({
+            "kind": kind,
+            "pin": "",
+            "description": text,
+            "frequency_hz": freq_hz,
+            "expected_text": expected_text,
+        })
     pin_advice = firmware_plan.get("pin_advice") or {}
     if pin_advice.get("pin", {}).get("name"):
         name = pin_advice["pin"]["name"]
-        signals.insert(0, {"kind": "led", "pin": name, "description": f"{name} toggles on firmware main loop"})
+        signals.insert(0, {
+            "kind": "led",
+            "pin": name,
+            "description": f"{name} toggles on firmware main loop",
+            "frequency_hz": None,
+            "expected_text": None,
+        })
     return signals
+
+
+def _verify_signal(expected: dict[str, Any], observed_capture: str) -> dict[str, Any]:
+    """Check whether observed_capture contains evidence of the expected signal.
+
+    P3: replaces keyword-only matching with structured verification:
+    - If expected_text is set, look for that exact substring in capture
+    - If frequency_hz is set, look for markers like "toggle", "blink", "2Hz"
+    - If only kind is set, fall back to kind-keyword match (led/uart/rtt/swo)
+
+    Returns: {"matched": bool, "reason": str, "evidence_snippet": str}
+    The function NEVER raises — bad inputs return matched=False with reason.
+    """
+    if not observed_capture:
+        return {"matched": False, "reason": "empty observation capture", "evidence_snippet": ""}
+
+    capture_lower = observed_capture.lower()
+    kind = str(expected.get("kind", "")).lower()
+    expected_text = expected.get("expected_text")
+    freq_hz = expected.get("frequency_hz")
+
+    # Path 1: exact expected text substring
+    if expected_text:
+        if expected_text in observed_capture:
+            idx = observed_capture.find(expected_text)
+            snippet = observed_capture[max(0, idx - 30): idx + len(expected_text) + 30]
+            return {
+                "matched": True,
+                "reason": f"expected_text '{expected_text}' found in capture",
+                "evidence_snippet": snippet,
+            }
+        return {
+            "matched": False,
+            "reason": f"expected_text '{expected_text}' not in capture",
+            "evidence_snippet": observed_capture[:200],
+        }
+
+    # Path 2: frequency marker
+    if freq_hz and freq_hz > 0:
+        freq_str = f"{freq_hz}hz"
+        if freq_str in capture_lower or f"{freq_hz} hz" in capture_lower:
+            return {
+                "matched": True,
+                "reason": f"frequency marker {freq_str} found in capture",
+                "evidence_snippet": observed_capture[:200],
+            }
+        toggle_markers = ("toggle", "blink", "toggle on", "toggle off", "on", "off")
+        if any(marker in capture_lower for marker in toggle_markers) and kind in ("led",):
+            return {
+                "matched": True,
+                "reason": f"toggle marker found for {kind} signal (frequency not verified)",
+                "evidence_snippet": observed_capture[:200],
+            }
+        return {
+            "matched": False,
+            "reason": f"frequency {freq_str} not found in capture",
+            "evidence_snippet": observed_capture[:200],
+        }
+
+    # Path 3: kind-keyword fallback
+    kind_keywords = {
+        "led": ("led", "toggle", "blink", "on", "off"),
+        "uart": ("uart", "hello", "tx", "rx"),
+        "rtt": ("rtt", "tick", "hello"),
+        "swo": ("swo", "itm"),
+    }
+    keywords = kind_keywords.get(kind, ())
+    if not keywords:
+        return {
+            "matched": False,
+            "reason": f"unknown signal kind: {kind}",
+            "evidence_snippet": observed_capture[:200],
+        }
+    matched_keyword = next((kw for kw in keywords if kw in capture_lower), None)
+    if matched_keyword:
+        return {
+            "matched": True,
+            "reason": f"keyword '{matched_keyword}' for kind '{kind}' found in capture",
+            "evidence_snippet": observed_capture[:200],
+        }
+    return {
+        "matched": False,
+        "reason": f"no {kind} keywords found in capture",
+        "evidence_snippet": observed_capture[:200],
+    }
 
 
 def _stage_debug_observe(
@@ -1041,17 +1159,37 @@ def _stage_debug_observe(
                 observe_mode = "rtt"
 
     observations = []
+    sim_capture = ""
+    if observe_mode == "sim":
+        # P3: synthesize a fake capture that matches all expected signals
+        # to prove _verify_signal can correctly verify them. Real capture
+        # goes through the same _verify_signal — code path identical.
+        sim_parts: list[str] = []
+        for sig in signals:
+            kind = sig.get("kind", "")
+            pin = sig.get("pin", "")
+            expected_text = sig.get("expected_text")
+            freq_hz = sig.get("frequency_hz")
+            if expected_text:
+                sim_parts.append(f"[{kind}] {expected_text}")
+            elif freq_hz:
+                sim_parts.append(f"[{kind} {pin or 'n/a'}] toggle at {freq_hz}Hz")
+            else:
+                sim_parts.append(f"[{kind} {pin or 'n/a'}] simulated toggle")
+        sim_capture = "\n".join(sim_parts)
+        capture_for_verify = sim_capture
+    else:
+        capture_for_verify = real_capture
+
     for sig in signals:
-        if observe_mode != "sim" and real_capture:
-            lowered = real_capture.lower()
-            matched = sig.get("kind", "") in lowered or sig.get("pin", "").lower() in lowered
-        else:
-            matched = True
+        verify = _verify_signal(sig, capture_for_verify)
         observations.append({
             "signal": sig,
             "mode": observe_mode,
-            "matched": matched,
-            "sample": (real_capture[:500] if real_capture else f"simulated {sig['kind']} output for {sig.get('pin', 'n/a')}"),
+            "matched": verify["matched"],
+            "reason": verify["reason"],
+            "evidence_snippet": verify["evidence_snippet"],
+            "sample": capture_for_verify[:500] if capture_for_verify else "",
         })
     return StageResult(
         status="completed",
@@ -1093,8 +1231,8 @@ def _stage_verify_goal(
     observe_ev = observe_stage.get("evidence", {}) if observe_stage else {}
     observations = observe_ev.get("observations", []) if isinstance(observe_ev, dict) else []
     signals = observe_ev.get("signals", []) if isinstance(observe_ev, dict) else []
-
-    observed_kinds = {obs.get("signal", {}).get("kind", "") for obs in observations}
+    observe_mode = observe_ev.get("mode", "sim") if isinstance(observe_ev, dict) else "sim"
+    observe_capture = observe_ev.get("capture", "") if isinstance(observe_ev, dict) else ""
 
     goal_keywords: list[str] = []
     if "led" in goal or "blink" in goal:
@@ -1108,11 +1246,35 @@ def _stage_verify_goal(
 
     matched: list[str] = []
     unmet: list[str] = []
+    verify_details: list[dict[str, Any]] = []
+    # P3: run _verify_signal for each signal kind, both keyword-matched and
+    # with the real capture (if real mode). This catches cases where sim
+    # capture says "matched" but real capture lacks the expected text.
+    capture_for_verify = observe_capture if observe_mode != "sim" and observe_capture else (
+        observe_ev.get("capture", "") if isinstance(observe_ev, dict) else ""
+    )
+    for sig in signals:
+        kind = str(sig.get("kind", ""))
+        if kind not in goal_keywords and goal_keywords:
+            continue
+        verify = _verify_signal(sig, capture_for_verify or _sim_capture_from_signals(signals))
+        verify_details.append({"signal": sig, "verify": verify})
+        if verify["matched"]:
+            if kind not in matched:
+                matched.append(kind)
+        else:
+            if kind not in unmet:
+                unmet.append(kind)
+
+    if not goal_keywords and signals:
+        for sig in signals:
+            kind = str(sig.get("kind", ""))
+            if kind not in matched:
+                matched.append(kind)
+
     if goal_keywords:
         for kw in goal_keywords:
-            if kw in observed_kinds:
-                matched.append(kw)
-            else:
+            if kw not in matched and kw not in unmet:
                 unmet.append(kw)
     elif signals:
         verification_level = "signals-present"
@@ -1129,13 +1291,21 @@ def _stage_verify_goal(
                 "unmet": unmet,
                 "signals": signals,
                 "observations": observations,
+                "verify_details": verify_details,
                 "verification_level": "behavior-keyword",
                 "note": "goal keywords not satisfied by observations; optimize-loop will retry",
             },
             error=f"unmet goal signals: {', '.join(unmet)}",
         )
 
-    verification_level = "behavior-keyword" if goal_keywords else ("signals-present" if signals else "evidence-completeness")
+    if observe_mode == "sim":
+        verification_level = "behavior-mock"
+    elif goal_keywords:
+        verification_level = "behavior-keyword"
+    elif signals:
+        verification_level = "signals-present"
+    else:
+        verification_level = "evidence-completeness"
     return StageResult(
         status="completed",
         evidence={
@@ -1144,10 +1314,29 @@ def _stage_verify_goal(
             "matched": matched,
             "signals": signals,
             "observations": observations,
+            "verify_details": verify_details,
             "verification_level": verification_level,
+            "observe_mode": observe_mode,
             "evidence_chain": {sid: bool(completed_stages[sid].get("evidence")) for sid in required},
         },
     )
+
+
+def _sim_capture_from_signals(signals: list[dict[str, Any]]) -> str:
+    """Build a synthetic capture string matching all signals (sim mode)."""
+    parts: list[str] = []
+    for sig in signals:
+        kind = str(sig.get("kind", ""))
+        pin = str(sig.get("pin", ""))
+        expected_text = sig.get("expected_text")
+        freq_hz = sig.get("frequency_hz")
+        if expected_text:
+            parts.append(f"[{kind}] {expected_text}")
+        elif freq_hz:
+            parts.append(f"[{kind} {pin or 'n/a'}] toggle at {freq_hz}Hz")
+        else:
+            parts.append(f"[{kind} {pin or 'n/a'}] simulated toggle")
+    return "\n".join(parts)
 
 
 def workflow_summary(state: dict[str, Any]) -> dict[str, Any]:

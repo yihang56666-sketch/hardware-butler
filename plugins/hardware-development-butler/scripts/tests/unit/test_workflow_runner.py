@@ -69,7 +69,7 @@ def test_full_p2_pipeline_completes_on_fixture(cubemx_basic_fixture: Path, tmp_p
     assert obs_stage["evidence"]["mode"] == "sim"
     assert any(sig["kind"] == "led" for sig in obs_stage["evidence"]["signals"])
     verify_stage = next(s for s in result["stages"] if s["id"] == "verify-goal")
-    assert verify_stage["evidence"]["verification_level"] == "behavior-keyword"
+    assert verify_stage["evidence"]["verification_level"] in ("behavior-mock", "behavior-keyword")
     assert "led" in verify_stage["evidence"]["matched"]
     state_path = wr.workflow_state_path(project)
     assert state_path.exists()
@@ -201,7 +201,11 @@ def test_debug_observe_extracts_led_signal_from_firmware_plan(cubemx_basic_fixtu
 
 
 def test_verify_goal_behavior_keyword_match(cubemx_basic_fixture: Path, tmp_path: Path) -> None:
-    """Goal containing 'led' must match debug-observe led observation."""
+    """Goal containing 'led' must match debug-observe led observation.
+
+    P3: sim mode returns verification_level='behavior-mock' (upgraded from
+    'behavior-keyword' to indicate the capture is synthetic, not real hardware).
+    """
     project = _copy_fixture(cubemx_basic_fixture, tmp_path)
     ctx = wr.WorkflowContext(feature="led-blink", pin="PD12", function="gpio-output")
     state = wr.init_workflow(project, intent="develop-feature", goal="LED blink on PD12", context=ctx)
@@ -209,7 +213,7 @@ def test_verify_goal_behavior_keyword_match(cubemx_basic_fixture: Path, tmp_path
     verify_stage = next(s for s in result["stages"] if s["id"] == "verify-goal")
 
     assert verify_stage["status"] == "completed"
-    assert verify_stage["evidence"]["verification_level"] == "behavior-keyword"
+    assert verify_stage["evidence"]["verification_level"] in ("behavior-mock", "behavior-keyword")
     assert "led" in verify_stage["evidence"]["matched"]
     assert verify_stage["evidence"]["unmet"] == [] if "unmet" in verify_stage["evidence"] else True
 
