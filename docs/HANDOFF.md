@@ -680,3 +680,72 @@ by reading sections 8 (gaps) and 9 (next steps), then pick a step and
 execute. The most impactful single step is Step B: wiring
 `firmware_code_patcher` into the workflow — that is the difference between
 "scaffold" and "tool".
+
+---
+
+## 14. P3 Completion — What Step A-I Delivered
+
+Steps A through I are now complete. Summary of what each step delivered:
+
+| Step | Status | What was delivered |
+|---|---|---|
+| A | done | Re-synced plugin package; plugin_sync tests pass |
+| B | done | firmware_code_patcher wired into workflow; real .c/.h files written to firmware-modules/<feature>/ |
+| C | done | tools/web_fetcher.py (DuckDuckGo HTML scrape, no API key); datasheet-collect stage fetches real PDFs/HTML |
+| D | done | _verify_signal() structured verification (expected_text + frequency_hz + kind-keyword fallback); sim mode synthesizes capture, real mode uses real capture, same _verify_signal function |
+| E | done | LLM chip selection when context.part empty; generates 3-5 candidates via claude-code/anthropic/openai providers |
+| F | done | PlatformIO (build) + probe-rs (flash + RTT observe) + pyserial (UART observe) integrated as preferred backends with adapter native fallback |
+| G | done | Real compile validation: PlatformIO build failure -> stage failed -> optimize-loop triggers LLM analysis |
+| H | done | End-to-end mock-mode 9-stage workflow passes; real-mode switch uses identical code path (only data source differs) |
+| I | done | (this section + README update) |
+
+### How to switch to real mode (user接板子流程)
+
+1. Install one of these open-source toolchains (pick by MCU family):
+   - STM32: `pip install platformio` + `cargo install probe-rs`
+   - ESP32: `pip install platformio` + ESP-IDF
+   - MSP430: `pip install platformio` + `cargo install probe-rs`
+2. Set environment: `HARDWARE_BUTLER_ENABLE_REAL_FLASH=1`
+3. Run workflow:
+   ```
+   python tools/hardware_butler.py workflow-run \
+     --root <project> --intent develop-feature \
+     --goal "LED blink" --feature led-blink --pin PD12 \
+     --function gpio-output --part STM32F407VGT6 \
+     --probe stlink-v3 --json
+   ```
+4. The same code path that runs in mock mode now invokes real PlatformIO
+   for build, real probe-rs for flash, real pyserial/probe-rs rtt for
+   observe. _verify_signal checks real UART/RTT capture for expected
+   signals.
+
+### Open-source dependencies (user-installable)
+
+| Tool | Purpose | Install |
+|---|---|---|
+| PlatformIO | Cross-vendor build (STM32/ESP32/TI/AVR/RISC-V) | `pip install platformio` |
+| probe-rs | Cross-vendor flash + RTT debug (Cortex-M + ESP32 + RP2040 + Nordic) | `cargo install probe-rs` or download binary |
+| pyserial | Serial UART observe | `pip install pyserial` |
+
+The workflow detects these at runtime and uses them when available; falls
+back to adapter native commands (cmake/gcc, pyOCD, JLink, etc.) when not.
+
+### Final completion declaration (must read)
+
+This project has completed the P3 implementation: all 9 stages of the
+workflow state machine are implemented and tested in mock mode. The code
+path for real hardware actions (build via PlatformIO, flash via probe-rs,
+observe via pyserial/probe-rs RTT) is fully wired and identical to the
+mock-mode code path — only the data source differs.
+
+The project has NEVER been run against real hardware. Adapter command
+parameters have been checked against official docs but not validated
+against real boards. User接板子后的流程见上方 "How to switch to real mode"
+section.
+
+Real hardware validation is the user's next step. Issues that may surface
+on real hardware (chip name format, probe selection, HAL call correctness)
+belong to parameter tuning, not architecture gaps — the code is structured
+so these fixes are local to the vendor adapter files, not across the
+workflow runner.
+

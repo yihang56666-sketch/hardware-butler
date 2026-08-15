@@ -27,7 +27,6 @@ def test_search_and_fetch_saves_results(tmp_path: Path) -> None:
         {"url": "https://example.com/stm32-ref-manual.pdf", "title": "STM32 Reference Manual"},
         {"url": "https://example.com/stm32-datasheet.pdf", "title": "STM32 Datasheet"},
     ]
-    fake_content = b"%PDF-1.4 fake pdf content"
 
     with patch("web_fetcher._search_duckduckgo", return_value=fake_hits):
         with patch("web_fetcher._download", return_value=(tmp_path / "fake.pdf", "application/pdf")):

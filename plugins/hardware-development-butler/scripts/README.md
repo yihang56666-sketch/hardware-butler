@@ -60,6 +60,35 @@ python tools\hardware_butler.py next-step --root <project-root> --json
 安装方式和 runtime 选择见 [docs/INSTALL.md](docs/INSTALL.md)。
 想把一块板子从资料、CubeMX、固件到台架安全完整理解，走 [docs/HARDWARE_UNDERSTANDING.md](docs/HARDWARE_UNDERSTANDING.md)。
 
+## One-Command Workflow (P3)
+
+完整 9 阶段自动化工作流：需求解析 → 芯片选型 → 资料拉取 → CubeMX 配置 → 固件代码生成 → 构建 → 烧录 → 调试观测 → 目标验证。默认 mock 模式不碰硬件；接板子后设 `HARDWARE_BUTLER_ENABLE_REAL_FLASH=1` 切真实模式。
+
+```powershell
+# Mock 模式（不碰硬件，使用内置 fixture）
+python tools\hardware_butler.py workflow-run \
+  --root tests\fixtures\cubemx-basic \
+  --intent develop-feature --goal "LED blink on PD12" \
+  --feature led-blink --pin PD12 --function gpio-output --json
+
+# Real 模式（接板子后）
+set HARDWARE_BUTLER_ENABLE_REAL_FLASH=1
+python tools\hardware_butler.py workflow-run \
+  --root <project> --intent develop-feature --goal "LED blink" \
+  --feature led-blink --pin PD12 --function gpio-output \
+  --part STM32F407VGT6 --probe stlink-v3 --json
+```
+
+开源依赖（可选，装了就能切真实硬件路径）：
+
+| 工具 | 用途 | 安装 |
+|---|---|---|
+| PlatformIO | 跨厂商构建（STM32/ESP32/TI/AVR/RISC-V，600+ board） | `pip install platformio` |
+| probe-rs | 跨厂商烧录 + RTT 调试（Cortex-M + ESP32 + RP2040 + Nordic） | `cargo install probe-rs` 或下载二进制 |
+| pyserial | 串口观测 | `pip install pyserial` |
+
+工作流检测到这些工具时优先用它们；没装时降级到 adapter 原生命令（cmake/gcc、pyOCD、JLink 等）。详见 [docs/HANDOFF.md](docs/HANDOFF.md) 第 14 节。
+
 ## What This Is
 
 这个工作区分成三块：
