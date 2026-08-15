@@ -40,6 +40,7 @@ import project_workflow  # noqa: E402
 import runtime_context  # noqa: E402
 import safe_io  # noqa: E402
 import task_workflows  # noqa: E402
+import workflow_runner  # noqa: E402
 from logger import get_logger  # noqa: E402
 
 # Setup logging
@@ -513,6 +514,47 @@ def main(argv: list[str] | None = None) -> None:
     task_p.add_argument("--json", action="store_true", dest="as_json")
     task_p.add_argument("--out", default="")
 
+    wf_run_p = sub.add_parser("workflow-run", help="Run a goal-driven workflow through staged plan/config/build/flash")
+    wf_run_p.add_argument("--root", default=".")
+    wf_run_p.add_argument("--intent", default="develop-feature")
+    wf_run_p.add_argument("--goal", default="")
+    wf_run_p.add_argument("--feature", default="")
+    wf_run_p.add_argument("--pin", default="")
+    wf_run_p.add_argument("--function", default="")
+    wf_run_p.add_argument("--instance", default="")
+    wf_run_p.add_argument("--part", default="")
+    wf_run_p.add_argument("--target", default="")
+    wf_run_p.add_argument("--probe", default="")
+    wf_run_p.add_argument("--backend", default="")
+    wf_run_p.add_argument("--resume", action="store_true")
+    wf_run_p.add_argument("--json", action="store_true", dest="as_json")
+    wf_run_p.add_argument("--out", default="")
+
+    wf_status_p = sub.add_parser("workflow-status", help="Show current workflow state and stage progress")
+    wf_status_p.add_argument("--root", default=".")
+    wf_status_p.add_argument("--json", action="store_true", dest="as_json")
+    wf_status_p.add_argument("--out", default="")
+
+    wf_search_p = sub.add_parser("workflow-search", help="Print the pending datasheet search task for host-agent execution")
+    wf_search_p.add_argument("--root", default=".")
+    wf_search_p.add_argument("--json", action="store_true", dest="as_json")
+    wf_search_p.add_argument("--out", default="")
+
+    wf_llm_tasks_p = sub.add_parser("workflow-llm-tasks", help="Print pending LLM tasks for host-agent execution")
+    wf_llm_tasks_p.add_argument("--root", default=".")
+    wf_llm_tasks_p.add_argument("--json", action="store_true", dest="as_json")
+    wf_llm_tasks_p.add_argument("--out", default="")
+
+    wf_llm_config_p = sub.add_parser("workflow-llm-config", help="Show or set LLM config")
+    wf_llm_config_p.add_argument("--root", default=".")
+    wf_llm_config_p.add_argument("--provider", default="")
+    wf_llm_config_p.add_argument("--api-key-env", default="")
+    wf_llm_config_p.add_argument("--model", default="")
+    wf_llm_config_p.add_argument("--base-url", default="")
+    wf_llm_config_p.add_argument("--timeout", type=int, default=0)
+    wf_llm_config_p.add_argument("--json", action="store_true", dest="as_json")
+    wf_llm_config_p.add_argument("--out", default="")
+
     cap_p = sub.add_parser("capabilities", help="Show product capability matrix")
     cap_p.add_argument("--json", action="store_true", dest="as_json")
     cap_p.add_argument("--out", default="")
@@ -757,6 +799,87 @@ def main(argv: list[str] | None = None) -> None:
             question=args.question,
         )
         output(data, as_json=args.as_json, markdown=task_workflows.render_markdown(data), out=args.out)
+    elif args.command == "workflow-run":
+        root = Path(args.root)
+        if args.resume:
+            state = workflow_runner.load_workflow_state(root)
+            if state is None:
+                output({"schema_version": 1, "status": "error", "error": "no workflow-state.json to resume"}, as_json=True)
+                sys.exit(2)
+        else:
+            ctx = workflow_runner.WorkflowContext(
+                part=args.part,
+                feature=args.feature,
+                pin=args.pin,
+                function=args.function,
+                instance=args.instance,
+                target=args.target,
+                probe=args.probe,
+                backend=args.backend,
+            )
+            state = workflow_runner.init_workflow(
+                root, intent=args.intent, goal=args.goal, context=ctx
+            )
+        state = workflow_runner.run_workflow(root, state)
+        data = {"schema_version": 1, "state": state, "summary": workflow_runner.workflow_summary(state)}
+        output(data, as_json=args.as_json, out=args.out)
+    elif args.command == "workflow-status":
+        root = Path(args.root)
+        state = workflow_runner.load_workflow_state(root)
+        if state is None:
+            output({"schema_version": 1, "status": "no-workflow", "root": str(root)}, as_json=args.as_json)
+        else:
+            output({"schema_version": 1, "state": state, "summary": workflow_runner.workflow_summary(state)}, as_json=args.as_json, out=args.out)
+    elif args.command == "workflow-search":
+        root = Path(args.root)
+        task_path = root / ".hardware-butler" / "search-tasks.json"
+        if not task_path.exists():
+            output({"schema_version": 1, "status": "no-search-task", "root": str(root)}, as_json=True)
+        else:
+            import json as _json
+            task = _json.loads(task_path.read_text(encoding="utf-8"))
+            output({"schema_version": 1, "status": "pending-search", "task": task}, as_json=args.as_json, out=args.out)
+    elif args.command == "workflow-llm-tasks":
+        root = Path(args.root)
+        tasks_path = root / ".hardware-butler" / "llm-tasks.jsonl"
+        responses_path = root / ".hardware-butler" / "llm-responses.jsonl"
+        import json as _json
+        pending: list[dict[str, Any]] = []
+        if tasks_path.exists():
+            responded_ids: set[str] = set()
+            if responses_path.exists():
+                for line in responses_path.read_text(encoding="utf-8", errors="replace").splitlines():
+                    try:
+                        r = _json.loads(line)
+                        if isinstance(r, dict) and r.get("task_id"):
+                            responded_ids.add(r["task_id"])
+                    except ValueError:
+                        continue
+            for line in tasks_path.read_text(encoding="utf-8", errors="replace").splitlines():
+                try:
+                    t = _json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(t, dict) and t.get("task_id") and t["task_id"] not in responded_ids:
+                    pending.append(t)
+        output({"schema_version": 1, "status": "ok", "pending": pending, "count": len(pending)}, as_json=args.as_json, out=args.out)
+    elif args.command == "workflow-llm-config":
+        root = Path(args.root)
+        import llm_config as _llm_cfg
+        if args.provider or args.api_key_env or args.model or args.base_url or args.timeout:
+            current = _llm_cfg.load_config(root)
+            new_config = _llm_cfg.LLMConfig(
+                provider=args.provider or current.provider,
+                api_key_env=args.api_key_env or current.api_key_env,
+                model=args.model or current.model,
+                base_url=args.base_url or current.base_url,
+                timeout_s=args.timeout if args.timeout else current.timeout_s,
+            )
+            path = _llm_cfg.save_config(root, new_config)
+            output({"schema_version": 1, "status": "saved", "config": new_config.to_dict(), "path": str(path)}, as_json=args.as_json, out=args.out)
+        else:
+            current = _llm_cfg.load_config(root)
+            output({"schema_version": 1, "status": "ok", "config": current.to_dict(), "configured": _llm_cfg.is_configured(current)}, as_json=args.as_json, out=args.out)
     elif args.command == "capabilities":
         data = product_doctor.capabilities()
         output(data, as_json=args.as_json, markdown=product_doctor.render_capabilities_markdown(data), out=args.out)

@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -401,3 +402,142 @@ def consume_token(workspace: Path, token: str, *, action: str, backend: str) -> 
         with log_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n")
     return {}
+
+
+# ---------------------------------------------------------------------------
+# Goal-level token model
+# ---------------------------------------------------------------------------
+#
+# The existing confirmation_token is keyless (deterministic sha256 of public
+# fields) and one-shot (replay-blocked via consume_token). That is correct for
+# single human-in-the-loop flash events.
+#
+# An automated workflow needs a different shape: one human confirmation should
+# authorise multiple flashes inside the SAME workflow goal (e.g. flash ->
+# observe -> tweak -> reflash) without re-prompting each time, BUT with
+# hard caps: max_uses, expiry, and workflow_id binding so a token minted for
+# workflow A cannot be replayed in workflow B.
+#
+# goal_token = cryptographically random (secrets.token_hex), never derived
+# from public fields. Only the hash is persisted. Use-count is derived by
+# scanning the safety log for goal-token-use events matching (workflow_id,
+# token_hash). Expiry is enforced via expires_at ISO timestamp.
+
+GOAL_TOKEN_PREFIX = "hwg1-"
+
+
+def mint_goal_token(
+    *,
+    workflow_id: str,
+    scope: str,
+    max_uses: int = 5,
+    ttl_seconds: int = 3600,
+) -> dict[str, Any]:
+    """Mint a cryptographically random goal token bound to a workflow.
+
+    Returns the plaintext token (caller keeps in memory) plus the public
+    record (token_hash, scope, max_uses, expires_at) that gets persisted to
+    workflow-state.json. The plaintext token is NEVER written to disk.
+    """
+    if not workflow_id:
+        raise ValueError("workflow_id is required")
+    if max_uses < 1:
+        raise ValueError("max_uses must be >= 1")
+    if ttl_seconds < 1:
+        raise ValueError("ttl_seconds must be >= 1")
+    plaintext = GOAL_TOKEN_PREFIX + secrets.token_hex(24)
+    expires_at = datetime.now(timezone.utc).timestamp() + ttl_seconds
+    return {
+        "token": plaintext,
+        "token_hash": token_hash(plaintext),
+        "workflow_id": workflow_id,
+        "scope": scope,
+        "max_uses": max_uses,
+        "expires_at": datetime.fromtimestamp(expires_at, tz=timezone.utc).isoformat(),
+    }
+
+
+def _goal_token_use_count(workspace: Path, workflow_id: str, token_hash_value: str) -> int:
+    """Count existing goal-token-use events for this (workflow_id, token_hash)."""
+    return sum(
+        1
+        for item in read_events(workspace)
+        if item.get("event") == "goal-token-use"
+        and item.get("workflow_id") == workflow_id
+        and item.get("token_hash") == token_hash_value
+    )
+
+
+def _goal_token_expired(expires_at_iso: str) -> bool:
+    try:
+        expires = datetime.fromisoformat(expires_at_iso)
+    except (ValueError, TypeError):
+        return True
+    return datetime.now(timezone.utc) > expires
+
+
+def check_goal_token(
+    workspace: Path,
+    *,
+    workflow_id: str,
+    token: str,
+    record: dict[str, Any],
+    action: str,
+    consume: bool = False,
+) -> dict[str, Any]:
+    """Validate a goal token against the safety log.
+
+    record must contain: token_hash, scope, max_uses, expires_at (from
+    mint_goal_token's output, less the plaintext token).
+
+    Returns allowed=True if:
+      - token_hash matches record["token_hash"]
+      - workflow_id matches record["workflow_id"]
+      - action is within scope (scope is a comma-separated action list or "*")
+      - token not expired
+      - use count < max_uses
+
+    If consume=True and allowed, appends a goal-token-use event to safety-log.
+    """
+    action = normalize_action(action)
+    expected_hash = record.get("token_hash", "")
+    supplied_hash = token_hash(token)
+    if not expected_hash or supplied_hash != expected_hash:
+        return {"allowed": False, "reason": "token_hash mismatch", "error_code": "invalid_token"}
+    if record.get("workflow_id") != workflow_id:
+        return {"allowed": False, "reason": "workflow_id mismatch", "error_code": "cross_workflow"}
+    scope = str(record.get("scope", ""))
+    if scope != "*" and action not in [s.strip() for s in scope.split(",")]:
+        return {"allowed": False, "reason": f"action {action} not in scope {scope}", "error_code": "out_of_scope"}
+    if _goal_token_expired(str(record.get("expires_at", ""))):
+        return {"allowed": False, "reason": "token expired", "error_code": "expired"}
+    used = _goal_token_use_count(workspace, workflow_id, supplied_hash)
+    max_uses = int(record.get("max_uses", 0))
+    if used >= max_uses:
+        return {"allowed": False, "reason": f"max_uses ({max_uses}) exhausted", "error_code": "exhausted", "uses": used}
+    if consume:
+        log_path = safety_log_path(workspace)
+        lock = _get_log_lock(str(log_path))
+        with lock:
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "schema_version": 1,
+                "event": "goal-token-use",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "workflow_id": workflow_id,
+                "token_hash": supplied_hash,
+                "action": action,
+                "use_count": used + 1,
+                "max_uses": max_uses,
+                "backend": record.get("backend", ""),
+            }
+            with log_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n")
+    return {
+        "allowed": True,
+        "workflow_id": workflow_id,
+        "token_hash": supplied_hash,
+        "uses": used,
+        "max_uses": max_uses,
+        "expires_at": record.get("expires_at", ""),
+    }

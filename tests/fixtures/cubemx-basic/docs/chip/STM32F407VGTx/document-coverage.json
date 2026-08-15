@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "status": "incomplete",
+  "generated_at": "2026-08-15T13:18:19.349855+00:00",
+  "required": [
+    {
+      "type": "datasheet",
+      "why": "pinout, package, electrical limits, memory, ordering code",
+      "status": "missing",
+      "found_count": 0,
+      "documents": []
+    },
+    {
+      "type": "reference_manual",
+      "why": "registers, clocks, interrupts, DMA, peripheral behavior",
+      "status": "missing",
+      "found_count": 0,
+      "documents": []
+    },
+    {
+      "type": "errata",
+      "why": "silicon defects and required workarounds",
+      "status": "missing",
+      "found_count": 0,
+      "documents": []
+    },
+    {
+      "type": "board_schematic",
+      "why": "actual pin use, power rails, boot straps, debug connector",
+      "status": "missing",
+      "found_count": 0,
+      "documents": []
+    },
+    {
+      "type": "application_notes",
+      "why": "layout and peripheral-specific implementation notes",
+      "status": "missing",
+      "found_count": 0,
+      "documents": []
+    }
+  ],
+  "missing": [
+    "datasheet",
+    "reference_manual",
+    "errata",
+    "board_schematic",
+    "application_notes"
+  ]
+}
