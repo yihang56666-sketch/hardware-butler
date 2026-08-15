@@ -78,5 +78,16 @@ class MSP430Adapter(VendorAdapter):
             f"{part} launchpad schematic",
         ]
 
+    def platformio_board(self, part: str) -> str:
+        """Map MSP430 part number to PlatformIO board id (timsp430 platform)."""
+        p = part.upper()
+        if "G2553" in p:
+            return "launchpad"
+        if "F5529" in p:
+            return "launchpadf5529"
+        if "FR5969" in p:
+            return "launchpadfr5969"
+        return "launchpad"
+
 
 register_adapter(MSP430Adapter())

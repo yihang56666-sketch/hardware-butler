@@ -106,5 +106,26 @@ class STM32Adapter(VendorAdapter):
             f"{part} pinout alternate functions",
         ]
 
+    def platformio_board(self, part: str) -> str:
+        """Map STM32 part number to PlatformIO board id (ststm32 platform)."""
+        p = part.upper()
+        if "F103" in p and "RB" in p:
+            return "nucleo_f103rb"
+        if "F401" in p:
+            return "nucleo_f401re"
+        if "F411" in p:
+            return "nucleo_f411re"
+        if "F407" in p:
+            return "nucleo_f429zi"
+        if "F429" in p:
+            return "nucleo_f429zi"
+        if "F446" in p:
+            return "nucleo_f446re"
+        if "L432" in p:
+            return "nucleo_l432kc"
+        if "L476" in p:
+            return "nucleo_l476rg"
+        return "nucleo_f401re"
+
 
 register_adapter(STM32Adapter())

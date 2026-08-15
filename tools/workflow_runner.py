@@ -829,18 +829,38 @@ def _stage_build(
 
     adapter = _get_vendor_adapter(state)
     if adapter:
+        build_ctx = {
+            "project_root": str(root),
+            "target": state.get("context", {}).get("target", ""),
+            "elf": "build/firmware.elf",
+            "probe": state.get("context", {}).get("probe", ""),
+        }
+        # P3 Step F: prefer PlatformIO if available, fall back to adapter
+        # native build_command.
+        pio_cmd = adapter.build_via_platformio(build_ctx)
+        if pio_cmd:
+            result = _run_subprocess(pio_cmd, timeout_s=300)
+            build_log = result.get("stdout", "") + "\n" + result.get("stderr", "")
+            build_executed = result["status"] == "ok"
+            return StageResult(
+                status="completed",
+                evidence={
+                    "build_plan": plan,
+                    "build_executed": build_executed,
+                    "build_backend": "platformio",
+                    "build_command": pio_cmd,
+                    "build_result": result,
+                    "build_log": build_log[-4000:],
+                },
+                error="",
+            )
         tools = adapter.detect_tools()
         build_tool_available = any(tools.values())
         if not build_tool_available:
             return StageResult(
                 status="completed",
-                evidence={"build_plan": plan, "build_executed": False, "reason": f"no {adapter.family} build tools on host; plan-only", "adapter": adapter.to_dict()},
+                evidence={"build_plan": plan, "build_executed": False, "reason": f"no {adapter.family} build tools + no PlatformIO on host; plan-only", "adapter": adapter.to_dict()},
             )
-        build_ctx = {
-            "project_root": str(root),
-            "target": state.get("context", {}).get("target", ""),
-            "elf": "build/firmware.elf",
-        }
         cmd = adapter.build_command(build_ctx)
         result = _run_subprocess(cmd, timeout_s=300)
         build_log = result.get("stdout", "") + "\n" + result.get("stderr", "")
@@ -967,6 +987,7 @@ def _stage_flash(
 
     flash_executed = False
     flash_result: dict[str, Any] = {}
+    flash_backend_used = ""
     if status == "completed" and os.environ.get("HARDWARE_BUTLER_ENABLE_REAL_FLASH") == "1":
         adapter = _get_vendor_adapter(state)
         if adapter:
@@ -976,12 +997,23 @@ def _stage_flash(
                 "elf": "build/firmware.elf",
                 "probe": ctx.probe,
             }
-            cmd = adapter.flash_command(flash_ctx)
-            if cmd:
-                flash_result = _run_subprocess(cmd, timeout_s=120)
+            # P3 Step F: prefer probe-rs for cross-vendor flash, fall back
+            # to adapter native flash_command, then to embeddedskills scripts.
+            probe_rs_cmd = adapter.flash_via_probe_rs(flash_ctx)
+            if probe_rs_cmd:
+                flash_result = _run_subprocess(probe_rs_cmd, timeout_s=120)
                 flash_executed = flash_result["status"] == "ok"
+                flash_backend_used = "probe-rs"
                 if not flash_executed:
                     status = "failed"
+            if not flash_result:
+                cmd = adapter.flash_command(flash_ctx)
+                if cmd:
+                    flash_result = _run_subprocess(cmd, timeout_s=120)
+                    flash_executed = flash_result["status"] == "ok"
+                    flash_backend_used = adapter.family
+                    if not flash_executed:
+                        status = "failed"
         if not flash_result:
             chip_stage = next((s for s in state["stages"] if s["id"] == "chip-selection"), None)
             backends = (chip_stage or {}).get("evidence", {}).get("backends", {}) if chip_stage else {}
@@ -1000,6 +1032,7 @@ def _stage_flash(
                     flash_args.extend(["--probe", ctx.probe])
                 flash_result = _run_embeddedskills_script(script, flash_args, timeout_s=120)
                 flash_executed = flash_result["status"] == "ok"
+                flash_backend_used = flash_backend
                 if not flash_executed:
                     status = "failed"
 
@@ -1018,6 +1051,7 @@ def _stage_flash(
             },
             "flash_executed": flash_executed,
             "flash_result": flash_result,
+            "flash_backend": flash_backend_used,
         },
         error="" if status == "completed" else f"goal_token check failed: {check.get('reason', '')}",
     )
@@ -1214,13 +1248,31 @@ def _stage_debug_observe(
             observe_ctx = {
                 "port": state.get("context", {}).get("probe", ""),
                 "baud": "115200",
+                "target": state.get("context", {}).get("target", ""),
+                "probe": ctx.probe,
             }
-            cmd = adapter.observe_command(observe_ctx)
-            if cmd:
-                observe_result = _run_subprocess(cmd, timeout_s=10)
+            # P3 Step F: prefer probe-rs rtt (cross-vendor), then pyserial
+            # (UART), then adapter native observe_command, then embeddedskills.
+            probe_rs_cmd = adapter.observe_via_probe_rs(observe_ctx)
+            if probe_rs_cmd:
+                observe_result = _run_subprocess(probe_rs_cmd, timeout_s=10)
                 if observe_result["status"] == "ok":
                     real_capture = observe_result.get("stdout", "")
-                    observe_mode = adapter.family
+                    observe_mode = "probe-rs-rtt"
+            if not real_capture:
+                pyserial_cmd = adapter.observe_via_pyserial(observe_ctx)
+                if pyserial_cmd:
+                    observe_result = _run_subprocess(pyserial_cmd, timeout_s=10)
+                    if observe_result["status"] == "ok":
+                        real_capture = observe_result.get("stdout", "")
+                        observe_mode = "pyserial"
+            if not real_capture:
+                cmd = adapter.observe_command(observe_ctx)
+                if cmd:
+                    observe_result = _run_subprocess(cmd, timeout_s=10)
+                    if observe_result["status"] == "ok":
+                        real_capture = observe_result.get("stdout", "")
+                        observe_mode = adapter.family
         elif observe_backend == "serial":
             serial_args = ["--workspace", str(root), "--action", "scan"]
             serial_result = _run_embeddedskills_script("serial/scripts/serial_scan.py", serial_args, timeout_s=20)

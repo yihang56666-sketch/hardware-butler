@@ -56,6 +56,60 @@ class VendorAdapter:
         """Return argv to observe (serial/RTT/ITM). ctx carries port, baud."""
         raise NotImplementedError
 
+    def platformio_board(self, part: str) -> str:
+        """Map a chip part number to a PlatformIO board id. Override per vendor."""
+        return ""
+
+    def build_via_platformio(self, ctx: dict[str, Any]) -> list[str]:
+        """Return argv to build via PlatformIO. Base impl generates `pio run -d
+        <project_root>` if pio is on PATH.
+
+        Returns empty list if pio is not on PATH (runner falls back to
+        adapter.build_command).
+        """
+        import shutil
+        if not shutil.which("pio"):
+            return []
+        project_root = ctx.get("project_root", ".")
+        return ["pio", "run", "-d", str(project_root)]
+
+    def flash_via_probe_rs(self, ctx: dict[str, Any]) -> list[str]:
+        """Return argv to flash via probe-rs download.
+
+        Returns empty list if probe-rs is not on PATH.
+        """
+        import shutil
+        if not shutil.which("probe-rs"):
+            return []
+        elf = ctx.get("elf", "build/firmware.elf")
+        target = ctx.get("target", "")
+        probe = ctx.get("probe", "")
+        args = ["probe-rs", "download", elf]
+        if target:
+            args.extend(["--chip", target])
+        if probe:
+            args.extend(["--probe", probe])
+        return args
+
+    def observe_via_probe_rs(self, ctx: dict[str, Any]) -> list[str]:
+        """Return argv to observe RTT via probe-rs. Returns [] if probe-rs absent."""
+        import shutil
+        if not shutil.which("probe-rs"):
+            return []
+        target = ctx.get("target", "")
+        args = ["probe-rs", "rtt", "attach"]
+        if target:
+            args.extend(["--chip", target])
+        return args
+
+    def observe_via_pyserial(self, ctx: dict[str, Any]) -> list[str]:
+        """Return argv to observe UART via pyserial miniterm."""
+        port = ctx.get("port", "")
+        baud = ctx.get("baud", "115200")
+        if not port:
+            return []
+        return ["python", "-m", "serial.tools.miniterm", port, baud]
+
     def datasheet_queries(self, part: str) -> list[str]:
         """Return search queries for the datasheet-collect stage."""
         return [

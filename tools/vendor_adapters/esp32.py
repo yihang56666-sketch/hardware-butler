@@ -79,5 +79,18 @@ class ESP32Adapter(VendorAdapter):
             f"{part} pinout",
         ]
 
+    def platformio_board(self, part: str) -> str:
+        """Map ESP32 part number to PlatformIO board id (espressif32 platform)."""
+        p = part.upper()
+        if "ESP32-C3" in p:
+            return "esp32-c3-devkitm-1"
+        if "ESP32-S2" in p:
+            return "esp32-s2-saola-1"
+        if "ESP32-S3" in p:
+            return "esp32-s3-devkitc-1"
+        if "ESP8266" in p:
+            return "esp01"
+        return "esp32dev"
+
 
 register_adapter(ESP32Adapter())
