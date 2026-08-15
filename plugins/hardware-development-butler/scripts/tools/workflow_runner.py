@@ -22,6 +22,7 @@ import bench_runbook
 import build_plan
 import cube_detect
 import cubemx_config_advisor
+import firmware_code_patcher
 import firmware_intent_planner
 import llm_client
 import llm_config
@@ -555,7 +556,13 @@ def _stage_firmware_plan(
     ctx: WorkflowContext,
     state: dict[str, Any],
 ) -> StageResult:
-    """Generate FreeRTOS firmware implementation plan (plan-only, no code edits)."""
+    """Generate FreeRTOS firmware plan + write real .c/.h app files.
+
+    P3: calls firmware_code_patcher.preview_patch() to get the file list,
+    then writes each file via safe_io.safe_write_text (validated against
+    runtime_context.allowed_write_roots). Files land under
+    <project-root>/Core/Src/app_<feature>.c and Core/Inc/app_<feature>.h.
+    """
     reqs = _requirement_evidence(state)
     if not reqs:
         return StageResult(status="failed", error="requirement-parse stage did not complete")
@@ -570,11 +577,57 @@ def _stage_firmware_plan(
         )
     except Exception as exc:  # noqa: BLE001
         return StageResult(status="failed", error=f"firmware-plan failed: {exc}")
-    status = "completed" if plan.get("status", "").startswith("plan-only") else "failed"
+    plan_status = "completed" if plan.get("status", "").startswith("plan-only") else "failed"
+    if plan_status == "failed":
+        return StageResult(
+            status="failed",
+            evidence={"firmware_plan": plan},
+            error=plan.get("error", ""),
+        )
+
+    # Generate and write real .c/.h files via firmware_code_patcher.
+    patch_evidence: dict[str, Any] = {}
+    try:
+        preview = firmware_code_patcher.preview_patch(
+            root, feature=feature, pin=pin, function=function, rtos=True
+        )
+        allowed_roots = runtime_context.allowed_write_roots(root)
+        written: list[dict[str, Any]] = []
+        skipped: list[dict[str, str]] = []
+        sample_content = ""
+        for item in preview.get("files", []):
+            file_path = Path(item["path"])
+            content = item["content"]
+            try:
+                result = safe_io.safe_write_text(
+                    file_path,
+                    content,
+                    allowed_roots=allowed_roots,
+                    backup_existing=True,
+                )
+                written.append({"path": str(file_path), "bytes": len(content), "result": result})
+                if not sample_content and content:
+                    sample_content = content[:500]
+            except Exception as write_exc:  # noqa: BLE001
+                skipped.append({"path": str(file_path), "reason": str(write_exc)})
+        patch_evidence = {
+            "module": preview.get("module", ""),
+            "files_written": written,
+            "files_skipped": skipped,
+            "write_policy": preview.get("write_policy", {}),
+            "sample_content": sample_content,
+            "contains_hal_call": any(
+                "HAL_" in (item.get("content", ""))
+                for item in preview.get("files", [])
+            ),
+        }
+    except Exception as exc:  # noqa: BLE001
+        patch_evidence = {"error": f"firmware_code_patcher failed: {exc}"}
+
     return StageResult(
-        status=status,
-        evidence={"firmware_plan": plan},
-        error=plan.get("error", "") if status == "failed" else "",
+        status="completed",
+        evidence={"firmware_plan": plan, "firmware_patch": patch_evidence},
+        error="",
     )
 
 
