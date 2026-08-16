@@ -891,3 +891,59 @@ spawns toolchains.
   governs anyway (scaffold never overwrites it).
 - Stack-overflow hook routes to `Error_Handler` (halt); a real board may
   want a reset or report instead.
+
+---
+
+## 16. Real-Board-Day Readiness: canonical chip names + real-preflight (2026-08-17)
+
+Pre-hardware validation of the exact parameters a real flash needs, done by
+installing pyOCD 0.45.1 + the Keil.STM32F4xx_DFP pack locally and querying
+the real pack database (no board required):
+
+### Bug found and fixed: chip-name mismatch would have failed every real flash
+
+pyOCD and probe-rs name devices `STM32F407VGTx` (trailing lowercase x in
+place of the package digit). Users and .ioc files pass `STM32F407VGT6`,
+which the workflow forwarded verbatim to the pyOCD `--target` / probe-rs
+`--chip` argument — and `VGT6` is not a prefix of `VGTx`, so the real flash
+would fail with "no target found". Verified empirically against the
+installed pack database: `pyocd list --targets -n stm32f407vgtx` returns 1
+row; `-n STM32F407VGT6` returns 0 rows.
+
+Fix: `VendorAdapter.canonical_chip()` (base: pass-through) + STM32 override
+(STM32* ending in one digit -> that digit becomes `x`; already-`x` names
+pass through; non-STM32 trailing digits like nRF52832 are never rewritten).
+Applied in both `flash_via_probe_rs` and the pyOCD branch of
+`flash_command`. Pinned by `test_pyocd_pack_resolves_canonical_names`
+(skips when pyOCD/pack absent).
+
+### Bug found and fixed: JDK jlink false positive
+
+On this machine `shutil.which("JLink.exe")` resolves to the Adoptium JDK's
+`jlink.exe` (Windows filesystem is case-insensitive). The STM32 adapter
+would then treat "JLink" as available and build Segger CLI args that invoke
+a Java tool. The STM32 adapter now rejects JLink.exe paths under
+java/jdk/adoptium/temurin/zulu/corretto directories; `real-preflight`
+reports it as a warning.
+
+### New command: real-preflight
+
+```bash
+python tools/hardware_butler.py real-preflight --root <project> --part STM32F407VGT6 --json
+```
+
+Read-only one-command check for real-board day (never writes/flashes):
+installed flash backends (probe-rs preferred, pyOCD fallback, others
+reported), attached probes via pyOCD/probe-rs `list` (correctly ignoring
+the "No available debug probes are connected" notice), the part's canonical
+chip name resolved against the locally installed pyOCD pack database
+(`resolves` / `pack-missing` with install hint / `not-found`), COM ports
+for serial observe, a `ready` verdict, and the exact
+`HARDWARE_BUTLER_ENABLE_REAL_FLASH=1 ... workflow-run` command to run once
+a board is plugged in.
+
+Current machine status (evidence, 2026-08-17): `ready=False` — pyOCD
+installed, `STM32F407VGTx` resolves, PlatformIO installed, but **no debug
+probe attached** (USB scan and pyOCD both confirm). The remaining step for
+the real loop is physical: plug in an ST-Link board, re-run
+`real-preflight`, then run the printed workflow command.

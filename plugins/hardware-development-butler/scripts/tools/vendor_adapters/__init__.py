@@ -210,6 +210,15 @@ class VendorAdapter:
         """PlatformIO framework name. Override per vendor."""
         return "arduino"
 
+    def canonical_chip(self, part: str) -> str:
+        """Normalize a user/.ioc part number to the debug backend's chip name.
+
+        Base behavior: pass through unchanged. Vendors override where the
+        flash backend names devices differently from orderable part numbers
+        (e.g. pyOCD/probe-rs name STM32F407VGT6 as STM32F407VGTx).
+        """
+        return part
+
     def flash_via_probe_rs(self, ctx: dict[str, Any]) -> list[str]:
         """Return argv to flash via probe-rs download (with post-flash verify).
 
@@ -219,7 +228,7 @@ class VendorAdapter:
         if not shutil.which("probe-rs"):
             return []
         elf = ctx.get("elf", "build/firmware.elf")
-        target = ctx.get("target", "")
+        target = self.canonical_chip(str(ctx.get("target", "")))
         probe = ctx.get("probe", "")
         args = ["probe-rs", "download", "--verify", elf]
         if target:

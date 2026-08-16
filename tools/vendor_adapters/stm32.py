@@ -18,6 +18,18 @@ from typing import Any
 from vendor_adapters import VendorAdapter, register_adapter
 
 
+def _segger_jlink() -> str:
+    """Resolve the Segger J-Link CLI, rejecting the JDK's jlink.exe that
+    shutil.which finds on case-insensitive Windows filesystems."""
+    found = shutil.which("JLink.exe") or ""
+    if not found:
+        return ""
+    lowered = found.lower().replace("\\", "/")
+    if any(marker in lowered for marker in ("/jdk", "/java", "adoptium", "temurin", "/zulu", "corretto")):
+        return ""
+    return found
+
+
 class STM32Adapter(VendorAdapter):
     def __init__(self) -> None:
         super().__init__(
@@ -36,7 +48,7 @@ class STM32Adapter(VendorAdapter):
             "cmake": bool(shutil.which("cmake")),
             "ninja": bool(shutil.which("ninja")),
             "STM32_Programmer_CLI": bool(shutil.which("STM32_Programmer_CLI")),
-            "JLink.exe": bool(shutil.which("JLink.exe")),
+            "JLink.exe": bool(_segger_jlink()),
             "openocd": bool(shutil.which("openocd")),
             "pyocd": bool(shutil.which("pyocd")),
             "st-flash": bool(shutil.which("st-flash")),
@@ -66,10 +78,27 @@ class STM32Adapter(VendorAdapter):
             return ["cmake", "-S", str(project_root), "-B", build_dir, "-G", "Ninja"]
         return ["arm-none-eabi-gcc", "--version"]
 
+    def canonical_chip(self, part: str) -> str:
+        """Map an orderable part number to the pyOCD/probe-rs chip name.
+
+        ST device names in debug databases end with a lowercase x in place of
+        the package code digit: STM32F407VGT6 (orderable) == STM32F407VGTx
+        (pyOCD pack / probe-rs target list, verified 2026-08-17 against
+        Keil.STM32F4xx_DFP via `pyocd list --targets`). Passing the raw part
+        fails with "no target found" because VGT6 is not a prefix of VGTx.
+        Names already ending in x (the .ioc convention) pass through.
+        """
+        normalized = part.strip().upper()
+        if not normalized.startswith("STM32"):
+            return part
+        if normalized[-1].isdigit() or normalized.endswith("X"):
+            return normalized[:-1] + "x"
+        return normalized
+
     def flash_command(self, ctx: dict[str, Any]) -> list[str]:
         tool = self._pick_flash_tool(ctx)
         elf = ctx.get("elf", "build/firmware.elf")
-        target = ctx.get("target", "")
+        target = self.canonical_chip(str(ctx.get("target", "")))
         port = ctx.get("port", "")
         if tool == "pyocd":
             args = ["pyocd", "flash", elf]

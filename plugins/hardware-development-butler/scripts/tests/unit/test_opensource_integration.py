@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 import sys
 from pathlib import Path
 from unittest.mock import patch
@@ -196,7 +197,102 @@ def test_platformio_workflow_ini_refreshes_with_rtos_decision(tmp_path: Path) ->
         assert not (build_root / "pio_freertos.py").exists()
 
 
+# --- real pyOCD pack resolution (gated; pins canonicalization to reality) ---
+
+_PYOCMD_CANDIDATES = [
+    Path(shutil.which("pyocd") or ""),
+    Path(__file__).resolve().parents[2] / ".venv" / "Scripts" / "pyocd.exe",
+]
+
+
+def _pyocd_target_rows(pyocd: str, name: str) -> int:
+    import subprocess
+    proc = subprocess.run(
+        [pyocd, "list", "--targets", "-n", name],
+        shell=False,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    lines = [line for line in proc.stdout.splitlines() if line.strip()]
+    # Drop the "Name Vendor ..." header and its dashed separator.
+    rows = lines[2:] if len(lines) >= 2 else []
+    return len(rows)
+
+
+def test_pyocd_pack_resolves_canonical_names() -> None:
+    """Pins canonical_chip() to the real pyOCD pack database: STM32F407VGTx
+    resolves, the raw orderable part STM32F407VGT6 does not. Skips when pyOCD
+    or the STM32F4 CMSIS pack is not installed locally."""
+    import pytest as _pytest
+
+    pyocd = next((str(p) for p in _PYOCMD_CANDIDATES if p and p.exists()), "")
+    if not pyocd:
+        _pytest.skip("pyOCD not installed")
+    if _pyocd_target_rows(pyocd, "stm32f407vg") == 0:
+        _pytest.skip("STM32F4 CMSIS pack not installed (pyocd pack install stm32f407vgtx)")
+    assert _pyocd_target_rows(pyocd, "stm32f407vgtx") == 1
+    assert _pyocd_target_rows(pyocd, "STM32F407VGT6") == 0
+
+
 # --- probe-rs flash integration ---
+
+
+# --- chip-name canonicalization for real flash backends ---
+
+@pytest.mark.enable_platformio
+def test_canonical_chip_maps_package_digit_to_x() -> None:
+    """pyOCD/probe-rs name devices as STM32F407VGTx (trailing x), while users
+    and .ioc files pass STM32F407VGT6 — passing the raw part fails with
+    "target not found" on a real flash (verified against pyOCD pack list)."""
+    adapter = vendor_adapters.get_adapter("stm32")
+    assert adapter is not None
+    assert adapter.canonical_chip("STM32F407VGT6") == "STM32F407VGTx"
+    assert adapter.canonical_chip("STM32F103RBT6") == "STM32F103RBTx"
+    assert adapter.canonical_chip("stm32f407vgt6") == "STM32F407VGTx"
+    # Already-canonical .ioc names pass through unchanged.
+    assert adapter.canonical_chip("STM32F407VGTx") == "STM32F407VGTx"
+    assert adapter.canonical_chip("STM32F429ZITx") == "STM32F429ZITx"
+    # No trailing package digit: nothing to strip, pass through as-is.
+    assert adapter.canonical_chip("STM32F407VG") == "STM32F407VG"
+
+
+def test_base_adapter_canonical_chip_is_passthrough() -> None:
+    """Non-STM32 parts with legit trailing digits (nRF52832) must never be
+    rewritten."""
+    adapter = vendor_adapters.get_adapter("esp32")
+    assert adapter is not None
+    assert adapter.canonical_chip("ESP32-S3") == "ESP32-S3"
+    base = vendor_adapters.get_adapter("msp430")
+    assert base is not None
+    assert base.canonical_chip("MSP430F5529") == "MSP430F5529"
+
+
+@pytest.mark.enable_platformio
+def test_flash_via_probe_rs_uses_canonical_chip() -> None:
+    adapter = vendor_adapters.get_adapter("stm32")
+    assert adapter is not None
+    with patch("shutil.which", return_value="/fake/probe-rs"):
+        cmd = adapter.flash_via_probe_rs(
+            {"target": "STM32F407VGT6", "elf": "build/firmware.elf", "probe": "stlink"}
+        )
+    assert "--chip" in cmd
+    assert cmd[cmd.index("--chip") + 1] == "STM32F407VGTx"
+
+
+@pytest.mark.enable_platformio
+def test_pyocd_flash_command_uses_canonical_chip() -> None:
+    adapter = vendor_adapters.get_adapter("stm32")
+    assert adapter is not None
+    tools = {
+        "arm-none-eabi-gcc": False, "cmake": False, "ninja": False,
+        "STM32_Programmer_CLI": False, "JLink.exe": False,
+        "openocd": False, "pyocd": True, "st-flash": False,
+    }
+    with patch.object(adapter, "detect_tools", return_value=tools):
+        cmd = adapter.flash_command({"target": "STM32F407VGT6", "elf": "build/firmware.elf"})
+    assert cmd[:2] == ["pyocd", "flash"]
+    assert cmd[cmd.index("--target") + 1] == "STM32F407VGTx"
 
 def test_flash_via_probe_rs_returns_empty_when_tool_missing() -> None:
     adapter = vendor_adapters.get_adapter("stm32")

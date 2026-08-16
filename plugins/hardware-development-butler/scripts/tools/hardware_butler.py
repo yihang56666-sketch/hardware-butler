@@ -567,6 +567,14 @@ def main(argv: list[str] | None = None) -> None:
     doctor_p.add_argument("--json", action="store_true", dest="as_json")
     doctor_p.add_argument("--out", default="")
 
+    preflight_p = sub.add_parser(
+        "real-preflight", help="Real-board-day readiness: tools, probes, chip-name resolution, run command"
+    )
+    preflight_p.add_argument("--root", default=".")
+    preflight_p.add_argument("--part", required=True)
+    preflight_p.add_argument("--probe", default="")
+    preflight_p.add_argument("--json", action="store_true", dest="as_json")
+
     status_p = sub.add_parser("status", help="Show project onboarding and readiness status")
     status_p.add_argument("--root", default=".")
     status_p.add_argument("--json", action="store_true", dest="as_json")
@@ -895,6 +903,11 @@ def main(argv: list[str] | None = None) -> None:
     elif args.command == "doctor":
         data = product_doctor.doctor(Path(args.root))
         output(data, as_json=args.as_json, markdown=product_doctor.render_doctor_markdown(data), out=args.out)
+    elif args.command == "real-preflight":
+        import real_preflight  # noqa: E402
+
+        data = real_preflight.run_preflight(Path(args.root), args.part, probe=args.probe)
+        output(data, as_json=args.as_json)
     elif args.command == "status":
         data = product_doctor.project_status(Path(args.root))
         output(data, as_json=args.as_json, markdown=product_doctor.render_status_markdown(data), out=args.out)

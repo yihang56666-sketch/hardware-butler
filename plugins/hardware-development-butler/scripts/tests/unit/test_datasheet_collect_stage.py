@@ -9,7 +9,6 @@ which the real-mode workflow actually takes on a headless run.
 from __future__ import annotations
 
 import json
-import shutil
 import sys
 from pathlib import Path
 from unittest.mock import patch
