@@ -219,6 +219,11 @@ def test_real_platformio_freertos_compile_e2e(cubemx_basic_fixture: Path) -> Non
     elf_bytes = elfs[0].read_bytes()
     for symbol in (b"osThreadCreate", b"osKernelStart", b"vApplicationStackOverflowHook"):
         assert symbol in elf_bytes, f"{symbol.decode()} missing from linked ELF"
+    # RTT observability: the control block magic must be in the image so
+    # probe-rs/pyOCD can discover it by RAM scan, and the heartbeat call
+    # must be linked.
+    assert b"SEGGER RTT" in elf_bytes, "RTT control block magic missing from ELF"
+    assert b"app_rtt_puts" in elf_bytes, "RTT heartbeat helper missing from ELF"
     objs = {p.name for p in (build_out.rglob("*.o"))}
     assert "tasks.o" in objs, "FreeRTOS kernel not compiled"
     assert "cmsis_os.o" in objs, "CMSIS-RTOS v1 wrapper not compiled"

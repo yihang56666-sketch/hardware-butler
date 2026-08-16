@@ -233,6 +233,7 @@ Hard requirements:
 4. Enable peripheral clocks before touching registers (e.g. __HAL_RCC_GPIOx_CLK_ENABLE / __HAL_RCC_I2C1_CLK_ENABLE). For I2C/SPI/UART/CAN the CubeMX MX_*_Init already ran; declare the handle extern.
 5. Conservative defaults: feature starts disabled until _start(); safe inactive output levels; bounded timeouts.
 6. Only use STM32 HAL APIs that exist for this family; no Arduino, no external libs.
+7. Observability: app_rtt_puts(const char *s) is already provided (Core/Inc/app_rtt.h; include it). Emit at least one short heartbeat line per action cycle (e.g. "app_{module}: on\\n") so the debug-observe stage can verify behavior over SWD. Do NOT add any RTT/SEGGER library of your own.
 
 Return JSON only:
 {{"module": "{module}", "header": "<full content of Core/Inc/app_{module}.h>", "source": "<full content of Core/Src/app_{module}.c>", "notes": "<1-3 sentences: assumptions + what the user must configure in CubeMX>"}}"""

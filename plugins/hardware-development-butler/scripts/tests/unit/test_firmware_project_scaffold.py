@@ -197,3 +197,35 @@ def test_ensure_compilable_preserves_existing_freertos_config() -> None:
     cfg.write_text("#ifndef FREERTOS_CONFIG_H\n#define FREERTOS_CONFIG_H\n#endif\n", encoding="utf-8")
     fps.ensure_compilable(project, part="STM32F407VGTx", module="led_blink", rtos=True)
     assert "FREERTOS_CONFIG_H" in cfg.read_text(encoding="utf-8")
+
+
+# --- RTT observability (minimal clean-room write side) ---
+
+def test_ensure_compilable_writes_rtt_support() -> None:
+    """The default firmware path must be observable: probe-rs/pyOCD discover
+    the RTT control block by scanning RAM for the 'SEGGER RTT' magic, so the
+    template firmware carries a minimal write-side ring buffer."""
+    project = copy_fixture("rtt-support")
+    result = fps.ensure_compilable(project, part="STM32F407VGTx", module="led_blink")
+    src = project / "Core" / "Src" / "app_rtt.c"
+    hdr = project / "Core" / "Inc" / "app_rtt.h"
+    assert src.exists() and hdr.exists()
+    text = src.read_text(encoding="utf-8")
+    # Public SEGGER RTT control-block contract.
+    assert '"SEGGER RTT\\0"' in text
+    assert "WrOff" in text and "RdOff" in text
+    assert "MaxNumUpBuffers" in text
+    # Ring write with wraparound and drop-when-full (never overwrites unread
+    # data, which would confuse the host-side reader).
+    assert "if (space == 0U)" in text or "space == 0" in text
+    assert any("app_rtt_puts" in line for line in hdr.read_text(encoding="utf-8").splitlines())
+    assert any("app_rtt" in action for action in result["actions"])
+
+
+def test_rtt_support_not_duplicated() -> None:
+    project = copy_fixture("rtt-dup")
+    fps.ensure_compilable(project, part="STM32F407VGTx", module="led_blink")
+    src = project / "Core" / "Src" / "app_rtt.c"
+    first = src.read_text(encoding="utf-8")
+    fps.ensure_compilable(project, part="STM32F407VGTx", module="led_blink")
+    assert src.read_text(encoding="utf-8") == first

@@ -158,6 +158,130 @@ void Error_Handler(void)
 """
 
 
+def render_rtt_h() -> str:
+    return """#ifndef APP_RTT_H
+#define APP_RTT_H
+
+#include <stdint.h>
+
+/* Minimal RTT up-channel writer. Host debuggers (probe-rs `rtt`, pyOCD
+   `rtt`) discover the control block by scanning RAM for the "SEGGER RTT"
+   magic, so no peripheral or probe-side registration is needed. */
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+void app_rtt_write(const char *data, uint32_t len);
+void app_rtt_puts(const char *s);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* APP_RTT_H */
+"""
+
+
+def render_rtt_c() -> str:
+    """Clean-room minimal implementation of the public RTT write-side
+    contract (SEGGER's documented control-block layout + up-buffer ring
+    semantics). Drop-on-full: unread data is never overwritten, so the host
+    reader's offsets stay consistent."""
+    return """#include "app_rtt.h"
+
+#include <string.h>
+
+#define APP_RTT_UP_BUFFER_SIZE 1024U
+#define APP_RTT_ID "SEGGER RTT\\0"
+
+typedef struct {
+    char *pBuffer;
+    uint32_t SizeOfBuffer;
+    volatile uint32_t WrOff;
+    volatile uint32_t RdOff;
+    volatile uint32_t Flags;
+} app_rtt_buffer_desc;
+
+typedef struct {
+    char acID[16];
+    uint32_t MaxNumUpBuffers;
+    uint32_t MaxNumDownBuffers;
+    app_rtt_buffer_desc aUp[1];
+    app_rtt_buffer_desc aDown[1];
+} app_rtt_control_block;
+
+static char app_rtt_up_storage[APP_RTT_UP_BUFFER_SIZE];
+static char app_rtt_down_storage[16];
+
+/* `used` keeps the block in the image even if the compiler sees no readers:
+   the host debugger reads it out-of-band via SWD. */
+static app_rtt_control_block app_rtt_cb __attribute__((used)) = {
+    .acID = APP_RTT_ID,
+    .MaxNumUpBuffers = 1U,
+    .MaxNumDownBuffers = 1U,
+    .aUp = {
+        {
+            .pBuffer = app_rtt_up_storage,
+            .SizeOfBuffer = APP_RTT_UP_BUFFER_SIZE,
+            .WrOff = 0U,
+            .RdOff = 0U,
+            .Flags = 0U,
+        },
+    },
+    .aDown = {
+        {
+            .pBuffer = app_rtt_down_storage,
+            .SizeOfBuffer = (uint32_t)sizeof(app_rtt_down_storage),
+            .WrOff = 0U,
+            .RdOff = 0U,
+            .Flags = 0U,
+        },
+    },
+};
+
+void app_rtt_write(const char *data, uint32_t len)
+{
+    uint32_t written = 0U;
+    if ((data == (void *)0) || (len == 0U))
+    {
+        return;
+    }
+    while (written < len)
+    {
+        uint32_t wr = app_rtt_cb.aUp[0].WrOff;
+        uint32_t rd = app_rtt_cb.aUp[0].RdOff;
+        uint32_t space = (rd > wr)
+            ? (rd - wr - 1U)
+            : (APP_RTT_UP_BUFFER_SIZE - (wr - rd) - 1U);
+        if (space == 0U)
+        {
+            break; /* full: drop the rest rather than overwrite unread data */
+        }
+        uint32_t chunk = (len - written) < space ? (len - written) : space;
+        uint32_t first = APP_RTT_UP_BUFFER_SIZE - wr;
+        if (first > chunk)
+        {
+            first = chunk;
+        }
+        (void)memcpy(&app_rtt_up_storage[wr], &data[written], first);
+        (void)memcpy(&app_rtt_up_storage[0], &data[written + first], chunk - first);
+        written += chunk;
+        app_rtt_cb.aUp[0].WrOff = (wr + chunk) % APP_RTT_UP_BUFFER_SIZE;
+    }
+}
+
+void app_rtt_puts(const char *s)
+{
+    if (s == (void *)0)
+    {
+        return;
+    }
+    app_rtt_write(s, (uint32_t)strlen(s));
+}
+"""
+
+
 def render_freertos_config_h() -> str:
     """Minimal CMSIS-RTOS v1 compatible FreeRTOSConfig.h (CubeMX puts it in
     Core/Inc, which the PlatformIO build already adds via -ICore/Inc).
@@ -275,6 +399,19 @@ def ensure_compilable(
         return result
 
     allowed_roots = runtime_context.allowed_write_roots(root)
+
+    rtt_h = root / "Core" / "Inc" / "app_rtt.h"
+    rtt_c = root / "Core" / "Src" / "app_rtt.c"
+    if not rtt_c.exists():
+        try:
+            safe_io.safe_write_text(rtt_h, render_rtt_h(), allowed_roots=allowed_roots)
+            safe_io.safe_write_text(rtt_c, render_rtt_c(), allowed_roots=allowed_roots)
+            result["files_written"].extend([str(rtt_h), str(rtt_c)])
+            result["actions"].append(
+                "created Core/{Inc,Src}/app_rtt.{h,c} (RTT observability; probe-rs/pyOCD auto-discover)"
+            )
+        except Exception as exc:  # noqa: BLE001
+            result["files_skipped"].append({"path": str(rtt_c), "reason": str(exc)})
 
     if rtos:
         freertos_cfg = root / "Core" / "Inc" / "FreeRTOSConfig.h"

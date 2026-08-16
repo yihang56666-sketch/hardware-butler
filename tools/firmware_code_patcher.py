@@ -409,6 +409,7 @@ def render_gpio_source(module: str, port: str, gpio_pin: str, plan: dict[str, An
     include_rtos = '#include "cmsis_os.h"\n' if plan["freertos"].get("enabled") else ""
     clock_enable = gpio_clock_enable(port)
     return f"""#include "app_{module}.h"
+#include "app_rtt.h"
 {include_rtos}
 static uint8_t app_{module}_enabled;
 
@@ -438,8 +439,10 @@ void app_{module}_task(void const *argument)
     for (;;)
     {{
         app_{module}_set(1U);
+        app_rtt_puts("app_{module}: on\\n");
         {delay_fn}(500U);
         app_{module}_set(0U);
+        app_rtt_puts("app_{module}: off\\n");
         {delay_fn}(500U);
     }}
 }}

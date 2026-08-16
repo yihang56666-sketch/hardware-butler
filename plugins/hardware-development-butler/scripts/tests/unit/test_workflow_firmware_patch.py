@@ -45,6 +45,24 @@ def test_firmware_plan_writes_real_c_files(cubemx_basic_fixture: Path, tmp_path:
     assert patch["contains_hal_call"], "generated firmware should reference HAL_ symbols"
 
 
+def test_gpio_template_is_observable_via_rtt(cubemx_basic_fixture: Path, tmp_path: Path) -> None:
+    """The led-blink task must emit per-cycle RTT heartbeats — without them
+    a real debug-observe window captures nothing and verify-goal cannot
+    match any signal (the real closed loop would spin empty)."""
+    project = _copy_fixture(cubemx_basic_fixture, tmp_path)
+    ctx = wr.WorkflowContext(feature="led-blink", pin="PD12", function="gpio-output")
+    state = wr.init_workflow(project, intent="develop-feature", goal="LED blink", context=ctx)
+    result = wr.run_workflow(project, state)
+
+    fw_stage = next(s for s in result["stages"] if s["id"] == "firmware-plan")
+    assert fw_stage["status"] == "completed"
+    app_src = (project / "Core" / "Src" / "app_led_blink.c").read_text(encoding="utf-8")
+    assert '#include "app_rtt.h"' in app_src
+    assert 'app_rtt_puts("app_led_blink: on\\n");' in app_src
+    assert 'app_rtt_puts("app_led_blink: off\\n");' in app_src
+    assert (project / "Core" / "Src" / "app_rtt.c").exists()
+
+
 def test_firmware_plan_evidence_includes_firmware_patch_field(cubemx_basic_fixture: Path, tmp_path: Path) -> None:
     project = _copy_fixture(cubemx_basic_fixture, tmp_path)
     ctx = wr.WorkflowContext(feature="led-blink", pin="PD12", function="gpio-output")
