@@ -947,3 +947,28 @@ installed, `STM32F407VGTx` resolves, PlatformIO installed, but **no debug
 probe attached** (USB scan and pyOCD both confirm). The remaining step for
 the real loop is physical: plug in an ST-Link board, re-run
 `real-preflight`, then run the printed workflow command.
+
+---
+
+## 17. RTT Observability: template firmware now emits verifiable signals (2026-08-17)
+
+Gap found while preparing real-board day: the led-blink template only
+toggled a GPIO pin — a real debug-observe window would capture NOTHING
+(no UART configured in scaffold projects, no RTT), so verify-goal could
+never match a signal and the real closed loop would spin empty.
+
+Fix: the scaffold now generates a minimal clean-room RTT write side
+(`Core/Src/app_rtt.c` + `Core/Inc/app_rtt.h`), implementing the public
+SEGGER RTT control-block contract (16-byte "SEGGER RTT" ID, one up buffer,
+drop-on-full ring). probe-rs (`probe-rs rtt`) and pyOCD (`pyocd rtt`)
+discover it by scanning RAM over SWD — no peripheral init, no probe
+registration, works on any SWD board (including the VCP-less F4 Discovery
+ST-Link). The gpio/led template task now emits `app_<module>: on|off`
+heartbeats every cycle, which is exactly the marker the `_verify_signal`
+step-D logic matches. The LLM codegen prompt instructs the model to use
+`app_rtt_puts` for observability (and forbids pulling in SEGGER sources).
+
+Verified by the gated real compile: the linked FreeRTOS `firmware.elf`
+contains the `SEGGER RTT` magic and `app_rtt_puts`. Real-board day
+therefore has an observable channel end to end: flash → `probe-rs rtt`
+window capture → heartbeat markers → verify-goal match.

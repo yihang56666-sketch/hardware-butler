@@ -972,3 +972,45 @@ Verified by the gated real compile: the linked FreeRTOS `firmware.elf`
 contains the `SEGGER RTT` magic and `app_rtt_puts`. Real-board day
 therefore has an observable channel end to end: flash → `probe-rs rtt`
 window capture → heartbeat markers → verify-goal match.
+
+---
+
+## 18. Emulated Execution Proof: firmware runs under QEMU (2026-08-17)
+
+The strongest no-board evidence short of hardware: the generated FreeRTOS
+firmware ELF **executes correctly in QEMU** (netduinoplus2 = STM32F405,
+same Cortex-M4 core and family as the F407 target), verified via
+arm-none-eabi-gdb (bundled in the PlatformIO toolchain):
+
+- breakpoint on `app_rtt_puts` is REACHED — proving the reset vector ran,
+  `HAL_Init` completed, the FreeRTOS scheduler started (SVC/PendSV context
+  switches), and `osDelay(500)` elapsed (500 real SysTick ticks);
+- the stop backtrace lands in `app_led_blink_task` (thread context);
+- the RTT control block in RAM starts with the `SEGGER RTT` magic and
+  `WrOff` (control-block offset +32) holds 18 with
+  `"app_led_blink: on\n"` readable from the ring buffer — the heartbeat
+  write works exactly per the contract.
+
+One-time setup used here (portable, no admin):
+
+```bash
+# QEMU ARM (xPack portable zip, ~40MB)
+curl -L -o qemu.zip \
+  https://github.com/xpack-dev-tools/qemu-arm-xpack/releases/download/v9.2.4-1/xpack-qemu-arm-9.2.4-1-win32-x64.zip
+unzip qemu.zip -d "$TEMP/qemu-arm"
+# gdb: already bundled at
+#   ~/.platformio/packages/toolchain-gccarmnoneeabi/bin/arm-none-eabi-gdb.exe
+```
+
+Run the gated e2e test (builds the firmware for real, then executes it in
+QEMU and asserts the heartbeat write):
+
+```bash
+HARDWARE_BUTLER_QEMU=1 pytest tests/unit/test_firmware_qemu_execution.py -q --no-cov --basetemp=.tmp-pytest-new
+```
+
+Honest labeling: this is EMULATED execution, not real hardware. It proves
+the generated binary boots and behaves (kernel start, tick, context
+switch, RTT write) and de-risks the real-board day, but the
+flash/observe/verify-goal loop on a physical board remains the final
+acceptance step.
