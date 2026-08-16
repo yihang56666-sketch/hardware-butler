@@ -78,11 +78,28 @@ def workflow_state_path(root: Path) -> Path:
     return root.resolve() / STATE_DIR / STATE_FILE
 
 
+def public_workflow_state(state: dict[str, Any]) -> dict[str, Any]:
+    """Return a JSON-safe workflow snapshot without ephemeral secrets.
+
+    Goal-token plaintext is process-local authority. It must never cross a
+    persistence or CLI boundary, including when nested in future evidence.
+    """
+    def redact(value: Any) -> Any:
+        if isinstance(value, dict):
+            return {key: redact(item) for key, item in value.items() if key != "_plaintext"}
+        if isinstance(value, list):
+            return [redact(item) for item in value]
+        return value
+
+    result = redact(state)
+    return result if isinstance(result, dict) else {}
+
+
 def write_workflow_state(root: Path, state: dict[str, Any]) -> Path:
     path = workflow_state_path(root)
     safe_io.safe_write_text(
         path,
-        json.dumps(state, ensure_ascii=False, indent=2) + "\n",
+        json.dumps(public_workflow_state(state), ensure_ascii=False, indent=2) + "\n",
         allowed_roots=runtime_context.allowed_write_roots(),
     )
     return path
@@ -93,7 +110,10 @@ def load_workflow_state(root: Path) -> dict[str, Any] | None:
     if not path.exists():
         return None
     loaded: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
-    return loaded
+    public = public_workflow_state(loaded)
+    if public != loaded:
+        write_workflow_state(root, public)
+    return public
 
 
 @dataclass(frozen=True)
@@ -190,18 +210,48 @@ def _reset_optimize_loop_stages(state: dict[str, Any]) -> None:
             stage.pop("finished_at", None)
 
 
+def _apply_fix_parsed(parsed: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
+    """Apply a parsed failure-analysis JSON to workflow state (shared by the
+    direct-LLM path and the host-agent resume path)."""
+    if isinstance(parsed.get("patch_fields"), dict):
+        for key in ("feature", "function", "pin", "instance", "part"):
+            if parsed["patch_fields"].get(key):
+                state["context"][key] = str(parsed["patch_fields"][key]).strip()
+    accepted_overrides: list[str] = []
+    rejected_overrides: list[str] = []
+    if isinstance(parsed.get("patch_files"), dict):
+        overrides = state.setdefault("context", {}).setdefault("code_overrides", {})
+        for raw_rel, content in parsed["patch_files"].items():
+            rel = str(raw_rel).replace("\\", "/").lstrip("./")
+            if _OVERRIDE_PATH_RE.match(rel) and isinstance(content, str) and content.strip():
+                overrides[rel] = content
+                accepted_overrides.append(rel)
+            else:
+                rejected_overrides.append(str(raw_rel))
+    analysis: dict[str, Any] = {"status": "ok", "analysis": parsed}
+    if accepted_overrides or rejected_overrides:
+        analysis["code_overrides_accepted"] = accepted_overrides
+        analysis["code_overrides_rejected"] = rejected_overrides
+    return analysis
+
+
 def _llm_analyze_failure_and_patch(root: Path, state: dict[str, Any], failed_stage: dict[str, Any]) -> dict[str, Any]:
     """Call LLM to analyze a failed stage and apply patch_fields to context.
 
     Returns the analysis result. If patch_fields are present, mutates
     state["context"] so the next firmware-plan attempt uses the suggested
-    pin/function/etc. For claude-code provider this returns pending; the host
-    agent must write the response and the runner re-enters verify-goal next pass.
+    pin/function/etc. If patch_files are present (compile errors fixable in
+    generated app code), validates the project-relative paths against the
+    generated-file allowlist and stores them in
+    state["context"]["code_overrides"] — firmware-plan applies them per file
+    on the retry, surviving stage resets. For claude-code provider this
+    returns pending and marks the stage evidence so a later resume consumes
+    the host agent's written response (see _consume_fix_response).
     """
     config = llm_config.load_config(root)
     if not llm_config.is_configured(config):
         return {"status": "no-llm"}
-    task_id = f"fix-{state['workflow_id']}-{failed_stage['id']}-{failed_stage.get('attempts', 0)}"
+    task_id = _fix_task_id(state, failed_stage)
     system, prompt = llm_client.analyze_failure_prompt(
         stage_id=failed_stage["id"],
         error=failed_stage.get("error", ""),
@@ -211,12 +261,32 @@ def _llm_analyze_failure_and_patch(root: Path, state: dict[str, Any], failed_sta
     result = llm_client.call_llm(root, config, task_id=task_id, prompt=prompt, system=system)
     if result.get("status") == "ok":
         parsed = _parse_llm_json(result["text"])
-        if parsed and isinstance(parsed.get("patch_fields"), dict):
-            for key in ("feature", "function", "pin", "instance", "part"):
-                if parsed["patch_fields"].get(key):
-                    state["context"][key] = str(parsed["patch_fields"][key]).strip()
-        return {"status": "ok", "analysis": parsed}
+        if parsed:
+            return _apply_fix_parsed(parsed, state)
+        return {"status": "ok", "analysis": None, "error": "unparseable LLM response"}
+    if result.get("status") == "pending":
+        evidence = failed_stage.setdefault("evidence", {})
+        evidence["llm_fix_pending"] = True
+        evidence["llm_fix_task_id"] = task_id
     return dict(result)
+
+
+def _fix_task_id(state: dict[str, Any], failed_stage: dict[str, Any]) -> str:
+    return f"fix-{state['workflow_id']}-{failed_stage['id']}-{failed_stage.get('attempts', 0)}"
+
+
+def _consume_fix_response(root: Path, state: dict[str, Any], failed_stage: dict[str, Any]) -> dict[str, Any] | None:
+    """On resume after a pending failure analysis: read the host agent's
+    written response for the recorded task and apply it. Returns the applied
+    analysis dict, or None when no response exists yet."""
+    task_id = str(failed_stage.get("evidence", {}).get("llm_fix_task_id") or _fix_task_id(state, failed_stage))
+    response = llm_client.read_response(root, task_id)
+    if not response:
+        return None
+    parsed = _parse_llm_json(str(response.get("text", "")))
+    if not parsed:
+        return None
+    return _apply_fix_parsed(parsed, state)
 
 
 def run_workflow(root: Path, state: dict[str, Any]) -> dict[str, Any]:
@@ -231,61 +301,81 @@ def run_workflow(root: Path, state: dict[str, Any]) -> dict[str, Any]:
     """
     root = root.resolve()
     while True:
-        progress = False
+        # Host-agent resume path: a failure analysis went pending earlier and
+        # the host has since written its response. Consume it (apply context
+        # patches / code overrides), then reset the optimize-loop stages.
         for stage in state["stages"]:
-            if stage["status"] == "completed":
-                continue
-            if stage["attempts"] >= MAX_STAGE_ATTEMPTS:
-                state["status"] = "failed"
-                state["updated_at"] = _now_iso()
-                write_workflow_state(root, state)
-                return state
-            stage["attempts"] += 1
-            stage["started_at"] = _now_iso()
-            state["current_stage"] = stage["id"]
-            state["status"] = "running"
-            state["updated_at"] = _now_iso()
-            write_workflow_state(root, state)
-            ctx = WorkflowContext(**{k: state["context"].get(k, "") for k in WorkflowContext().__dict__})
-            try:
-                result = _dispatch_stage(stage["id"], root, ctx, state)
-            except Exception as exc:  # noqa: BLE001 - surface as failed stage
-                result = StageResult(status="failed", error=f"{type(exc).__name__}: {exc}")
-            stage["finished_at"] = _now_iso()
-            stage["status"] = result.status
-            stage["error"] = result.error
-            stage["evidence"] = result.evidence
-            state["updated_at"] = _now_iso()
-            write_workflow_state(root, state)
-            progress = True
-            if result.status != "completed":
-                # P3 Step G: optimize-loop triggers on build failure AND verify-goal
-                # failure. Both need LLM analysis to suggest context patches.
-                if stage["id"] in ("build", "verify-goal") and result.status == "failed" and stage["attempts"] < MAX_STAGE_ATTEMPTS:
-                    analysis = _llm_analyze_failure_and_patch(root, state, stage)
-                    if analysis.get("status") == "pending":
-                        state["status"] = "blocked-needs-input"
-                        state["updated_at"] = _now_iso()
-                        write_workflow_state(root, state)
-                        return state
+            if (
+                stage["status"] == "failed"
+                and stage["id"] in ("build", "verify-goal")
+                and stage["attempts"] < MAX_STAGE_ATTEMPTS
+                and stage.get("evidence", {}).get("llm_fix_pending")
+            ):
+                analysis = _consume_fix_response(root, state, stage)
+                if analysis:
+                    stage["evidence"].pop("llm_fix_pending", None)
                     state["status"] = "retrying"
                     state["updated_at"] = _now_iso()
                     state["last_analysis"] = analysis
                     _reset_optimize_loop_stages(state)
                     write_workflow_state(root, state)
                     break
-                state["status"] = result.status
+        else:
+            progress = False
+            for stage in state["stages"]:
+                if stage["status"] == "completed":
+                    continue
+                if stage["attempts"] >= MAX_STAGE_ATTEMPTS:
+                    state["status"] = "failed"
+                    state["updated_at"] = _now_iso()
+                    write_workflow_state(root, state)
+                    return state
+                stage["attempts"] += 1
+                stage["started_at"] = _now_iso()
+                state["current_stage"] = stage["id"]
+                state["status"] = "running"
+                state["updated_at"] = _now_iso()
+                write_workflow_state(root, state)
+                ctx = WorkflowContext(**{k: state["context"].get(k, "") for k in WorkflowContext().__dict__})
+                try:
+                    result = _dispatch_stage(stage["id"], root, ctx, state)
+                except Exception as exc:  # noqa: BLE001 - surface as failed stage
+                    result = StageResult(status="failed", error=f"{type(exc).__name__}: {exc}")
+                stage["finished_at"] = _now_iso()
+                stage["status"] = result.status
+                stage["error"] = result.error
+                stage["evidence"] = result.evidence
+                state["updated_at"] = _now_iso()
+                write_workflow_state(root, state)
+                progress = True
+                if result.status != "completed":
+                    # P3 Step G: optimize-loop triggers on build failure AND verify-goal
+                    # failure. Both need LLM analysis to suggest context patches.
+                    if stage["id"] in ("build", "verify-goal") and result.status == "failed" and stage["attempts"] < MAX_STAGE_ATTEMPTS:
+                        analysis = _llm_analyze_failure_and_patch(root, state, stage)
+                        if analysis.get("status") == "pending":
+                            state["status"] = "blocked-needs-input"
+                            state["updated_at"] = _now_iso()
+                            write_workflow_state(root, state)
+                            return state
+                        state["status"] = "retrying"
+                        state["updated_at"] = _now_iso()
+                        state["last_analysis"] = analysis
+                        _reset_optimize_loop_stages(state)
+                        write_workflow_state(root, state)
+                        break
+                    state["status"] = result.status
+                    state["updated_at"] = _now_iso()
+                    write_workflow_state(root, state)
+                    return state
+            else:
+                state["status"] = "completed"
+                state["current_stage"] = ""
                 state["updated_at"] = _now_iso()
                 write_workflow_state(root, state)
                 return state
-        else:
-            state["status"] = "completed"
-            state["current_stage"] = ""
-            state["updated_at"] = _now_iso()
-            write_workflow_state(root, state)
-            return state
-        if not progress:
-            return state
+            if not progress:
+                return state
     return state
 
 
@@ -317,15 +407,16 @@ def _dispatch_stage(
 
 
 def _parse_llm_json(text: str) -> dict[str, Any] | None:
-    """Extract a JSON object from an LLM response that may contain prose."""
-    match = _re.search(r"\{[^{}]*\}", text, _re.DOTALL)
-    if not match:
-        return None
-    try:
-        parsed: dict[str, Any] = json.loads(match.group(0))
-        return parsed
-    except ValueError:
-        return None
+    """Extract a JSON object from an LLM response that may contain prose.
+
+    Delegates to the brace-depth scanner in llm_codegen because responses
+    may embed C code (with nested braces) inside JSON string values, which
+    a flat regex cannot handle.
+    """
+    import llm_codegen
+    parsed = llm_codegen.extract_json_object(text)
+    assert parsed is None or isinstance(parsed, dict)
+    return parsed
 
 
 def _parse_llm_json_array(text: str) -> list[Any] | None:
@@ -364,7 +455,10 @@ def _stage_requirement_parse(
         "goal": goal,
     }
 
-    llm_task_id = f"intent-{state['workflow_id']}-{state.get('updated_at', '')[-8:]}"
+    # Deterministic task id: the host agent answers by task_id between runs,
+    # so it must NOT depend on wall-clock/updated_at (otherwise every resume
+    # mints a fresh id and the host response never matches).
+    llm_task_id = f"intent-{state['workflow_id']}"
     if goal and not ctx.feature:
         config = llm_config.load_config(root)
         if llm_config.is_configured(config):
@@ -422,22 +516,45 @@ def _stage_chip_selection(
     detected_part = primary_mcu.get("name", "") if isinstance(primary_mcu, dict) else ""
     if not ctx.part and not detected_part:
         candidates = _llm_chip_candidates(root, state)
+        auto_select = bool(state.get("context", {}).get("auto_select"))
+        if auto_select and candidates:
+            selected = candidates[0].get("part", "")
+            if selected:
+                state["context"]["part"] = selected
+                backends = backend_detector.detect_backends(root, context_probe=ctx.probe, context_part=selected)
+                return StageResult(
+                    status="completed",
+                    evidence={
+                        "selected_part": selected,
+                        "detected_part": detected_part,
+                        "selection_mode": "llm-auto-select-first",
+                        "candidates": candidates,
+                        "detection": detection,
+                        "backends": backends,
+                    },
+                )
         return StageResult(
             status="blocked-needs-input",
             evidence={
                 "detected": detection,
                 "candidates": candidates,
-                "instruction": "re-run workflow with --part <chosen chip>",
+                "auto_select": auto_select,
+                "instruction": (
+                    "re-run workflow with --part <chosen chip>"
+                    + ("" if auto_select else " or --auto-select to take the first LLM candidate")
+                ),
             },
             error="no chip specified and CubeMX detection found none; LLM candidates generated — pick one",
         )
     selected = ctx.part or detected_part
+    selection_mode = "context-flag" if ctx.part else "cubemx-detection"
     backends = backend_detector.detect_backends(root, context_probe=ctx.probe, context_part=selected)
     return StageResult(
         status="completed",
         evidence={
             "selected_part": selected,
             "detected_part": detected_part,
+            "selection_mode": selection_mode,
             "detection": detection,
             "backends": backends,
         },
@@ -666,6 +783,37 @@ def _requirement_evidence(state: dict[str, Any]) -> dict[str, Any] | None:
     return parsed
 
 
+_OVERRIDE_PATH_RE = _re.compile(r"^Core/(?:Inc|Src)/app_[A-Za-z0-9_]+\.(?:c|h)$")
+
+
+def _apply_code_overrides(
+    root: Path,
+    state: dict[str, Any],
+    files: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Let accepted LLM failure patches (state.context.code_overrides) win
+    per file over whatever the generator produced. Returns the new file list
+    and the project-relative paths that were overridden."""
+    overrides = state.get("context", {}).get("code_overrides") or {}
+    if not overrides:
+        return files, []
+    root = root.resolve()
+    out: list[dict[str, Any]] = []
+    applied: list[str] = []
+    for item in files:
+        rel = ""
+        try:
+            rel = Path(item["path"]).resolve().relative_to(root).as_posix()
+        except ValueError:
+            rel = ""
+        if rel and rel in overrides and isinstance(overrides[rel], str):
+            out.append({**item, "content": overrides[rel], "source": "llm-failure-patch"})
+            applied.append(rel)
+        else:
+            out.append(item)
+    return out, applied
+
+
 def _stage_firmware_plan(
     root: Path,
     ctx: WorkflowContext,
@@ -700,17 +848,82 @@ def _stage_firmware_plan(
             error=plan.get("error", ""),
         )
 
-    # Generate and write real .c/.h files via firmware_code_patcher.
+    # The PlatformIO stm32cube backend does not vendor CMSIS-RTOS/FreeRTOS,
+    # so codegen must be bare-metal there even when the .ioc enables RTOS.
+    # The plan above still records the RTOS intent and availability.
+    adapter = _get_vendor_adapter(state)
+    pio_available = bool(adapter and adapter.find_pio(root))
+    rtos_codegen = bool(plan.get("freertos", {}).get("enabled")) and not pio_available
+    rtos_note = (
+        ""
+        if rtos_codegen == bool(plan.get("freertos", {}).get("enabled"))
+        else (
+            "RTOS downgraded to bare-metal: PlatformIO build backend does not vendor "
+            "CMSIS-RTOS; .ioc RTOS intent is preserved in firmware_plan evidence"
+        )
+    )
+
+    # App module generation: LLM first (opt-in via llm-config codegen),
+    # deterministic templates as fallback. Either way, previously accepted
+    # failure-patch overrides (state.context.code_overrides) win per file.
+    module = firmware_code_patcher.module_name(feature)
+    chip_stage = next((s for s in state["stages"] if s["id"] == "chip-selection"), None)
+    selected_part = ""
+    if chip_stage and chip_stage["status"] == "completed":
+        selected_part = chip_stage.get("evidence", {}).get("selected_part", "")
+    selected_part = selected_part or state.get("context", {}).get("part", "")
+
+    codegen_evidence: dict[str, Any] = {"status": "not-enabled"}
+    app_files: list[dict[str, Any]] | None = None
+    try:
+        import llm_codegen
+        codegen_result = llm_codegen.generate_app_module(
+            root,
+            feature=feature,
+            pin=pin,
+            function=function,
+            part=selected_part,
+            hal_handle=str(plan.get("hal", {}).get("handle", "")),
+            rtos=rtos_codegen,
+            goal=str(state.get("goal", "")),
+        )
+        if codegen_result.get("status") == "pending":
+            return StageResult(
+                status="blocked-needs-input",
+                evidence={
+                    "firmware_plan": plan,
+                    "llm_codegen": codegen_result,
+                    "instruction": "host agent must execute the codegen llm-task and write the response, then resume",
+                },
+                error="LLM codegen pending; run workflow-llm-tasks, then workflow-run --resume",
+            )
+        if codegen_result.get("status") == "ok":
+            app_files = codegen_result["files"]
+            codegen_evidence = {
+                "status": "ok",
+                "module": codegen_result.get("module", ""),
+                "notes": codegen_result.get("notes", ""),
+            }
+        elif codegen_result.get("status") == "error":
+            codegen_evidence = codegen_result
+    except Exception as exc:  # noqa: BLE001
+        codegen_evidence = {"status": "error", "error": f"llm_codegen failed: {exc}"}
+
     patch_evidence: dict[str, Any] = {}
     try:
-        preview = firmware_code_patcher.preview_patch(
-            root, feature=feature, pin=pin, function=function, rtos=True
-        )
+        if app_files is not None:
+            preview_files = app_files
+        else:
+            preview = firmware_code_patcher.preview_patch(
+                root, feature=feature, pin=pin, function=function, rtos=rtos_codegen
+            )
+            preview_files = preview.get("files", [])
+        preview_files, overridden = _apply_code_overrides(root, state, preview_files)
         allowed_roots = runtime_context.allowed_write_roots(root)
         written: list[dict[str, Any]] = []
         skipped: list[dict[str, str]] = []
         sample_content = ""
-        for item in preview.get("files", []):
+        for item in preview_files:
             file_path = Path(item["path"])
             content = item["content"]
             try:
@@ -720,28 +933,53 @@ def _stage_firmware_plan(
                     allowed_roots=allowed_roots,
                     backup_existing=True,
                 )
-                written.append({"path": str(file_path), "bytes": len(content), "result": result})
+                written.append({
+                    "path": str(file_path),
+                    "bytes": len(content),
+                    "source": item.get("source") or ("llm" if app_files is not None else "template"),
+                    "result": result,
+                })
                 if not sample_content and content:
                     sample_content = content[:500]
             except Exception as write_exc:  # noqa: BLE001
                 skipped.append({"path": str(file_path), "reason": str(write_exc)})
         patch_evidence = {
-            "module": preview.get("module", ""),
+            "module": module,
+            "generator": "llm" if app_files is not None else "template",
             "files_written": written,
             "files_skipped": skipped,
-            "write_policy": preview.get("write_policy", {}),
+            "code_overrides_applied": overridden,
             "sample_content": sample_content,
-            "contains_hal_call": any(
-                "HAL_" in (item.get("content", ""))
-                for item in preview.get("files", [])
-            ),
+            "rtos_codegen": rtos_codegen,
+            "rtos_note": rtos_note,
+            "contains_hal_call": any("HAL_" in (item.get("content", "")) for item in preview_files),
         }
     except Exception as exc:  # noqa: BLE001
-        patch_evidence = {"error": f"firmware_code_patcher failed: {exc}"}
+        patch_evidence = {"error": f"firmware code generation failed: {exc}"}
+
+    # Ensure the project is actually compilable: stub main.c gets replaced
+    # with one that calls the app module; main.h is created if missing; a
+    # real CubeMX main.c gets USER CODE insertions instead.
+    scaffold_evidence: dict[str, Any] = {}
+    try:
+        import firmware_project_scaffold
+        scaffold_evidence = firmware_project_scaffold.ensure_compilable(
+            root,
+            part=selected_part,
+            module=module,
+            rtos=rtos_codegen,
+        )
+    except Exception as exc:  # noqa: BLE001
+        scaffold_evidence = {"status": "error", "error": f"firmware_project_scaffold failed: {exc}"}
 
     return StageResult(
         status="completed",
-        evidence={"firmware_plan": plan, "firmware_patch": patch_evidence},
+        evidence={
+            "firmware_plan": plan,
+            "firmware_patch": patch_evidence,
+            "llm_codegen": codegen_evidence,
+            "project_scaffold": scaffold_evidence,
+        },
         error="",
     )
 
@@ -829,6 +1067,24 @@ def _run_embeddedskills_script(script_rel_path: str, args: list[str], *, timeout
         return {"status": "error", "returncode": -1, "stdout": "", "stderr": str(exc)}
 
 
+def _resolve_pio_artifacts(adapter: vendor_adapters.VendorAdapter, build_ctx: dict[str, Any]) -> dict[str, Any]:
+    """Locate firmware.elf/.bin/.hex after a PlatformIO build.
+
+    PlatformIO writes to <build_root>/.pio/build/<env>/. The build root may
+    be an ASCII staging copy when the project path is non-ASCII, so ask the
+    adapter where it built. Returns {"elf": abs_path, "bin": ..., "hex": ...,
+    "build_root": ...} with only the fields found.
+    """
+    build_root = adapter.pio_build_root(build_ctx)
+    found: dict[str, Any] = {"build_root": str(build_root)}
+    for env_dir in sorted((build_root / ".pio" / "build").glob("*")) if (build_root / ".pio" / "build").exists() else []:
+        for key, name in (("elf", "firmware.elf"), ("bin", "firmware.bin"), ("hex", "firmware.hex")):
+            candidate = env_dir / name
+            if candidate.exists() and key not in found:
+                found[key] = str(candidate)
+    return found
+
+
 def _stage_build(
     root: Path,
     ctx: WorkflowContext,
@@ -850,8 +1106,13 @@ def _stage_build(
 
     adapter = _get_vendor_adapter(state)
     if adapter:
+        chip_stage = next((s for s in state["stages"] if s["id"] == "chip-selection"), None)
+        selected_part = ""
+        if chip_stage and chip_stage["status"] == "completed":
+            selected_part = chip_stage.get("evidence", {}).get("selected_part", "")
         build_ctx = {
             "project_root": str(root),
+            "part": selected_part or state.get("context", {}).get("part", ""),
             "target": state.get("context", {}).get("target", ""),
             "elf": "build/firmware.elf",
             "probe": state.get("context", {}).get("probe", ""),
@@ -875,6 +1136,11 @@ def _stage_build(
                     },
                 )
             stage_status = "completed" if build_executed else "failed"
+            artifacts: dict[str, Any] = {}
+            if build_executed:
+                artifacts = _resolve_pio_artifacts(adapter, build_ctx)
+                if artifacts.get("elf"):
+                    state["context"]["elf"] = artifacts["elf"]
             return StageResult(
                 status=stage_status,
                 evidence={
@@ -884,6 +1150,7 @@ def _stage_build(
                     "build_command": pio_cmd,
                     "build_result": result,
                     "build_log": build_log[-4000:],
+                    "artifacts": artifacts,
                 },
                 error="" if build_executed else f"PlatformIO build failed (exit {result.get('returncode', -1)}); see build_log",
             )
@@ -976,8 +1243,9 @@ def _stage_flash(
     authorises repeated build-flash/flash-debug within the same workflow_id,
     subject to max_uses and expires_at caps. Each stage entry consumes one
     use, modelling the "flash -> observe -> reflash" loop without real
-    hardware. Token plaintext stays in workflow-state.json for this slice
-    (acceptable for P1; P2 will move plaintext to a session-kept secret).
+    hardware. Token plaintext stays only in the current process. Persisted
+    state stores the hash and resumes by issuing a fresh token when this stage
+    must run again.
     """
     chip_stage = next((s for s in state["stages"] if s["id"] == "chip-selection"), None)
     target = ""
@@ -995,7 +1263,12 @@ def _stage_flash(
         return StageResult(status="failed", error=f"bench-runbook failed: {exc}")
 
     goal_token_record = state.get("goal_token")
-    if not goal_token_record:
+    previous_token_hash = ""
+    reissued_after_resume = False
+    if not goal_token_record or "_plaintext" not in goal_token_record:
+        if goal_token_record:
+            previous_token_hash = str(goal_token_record.get("token_hash", ""))
+            reissued_after_resume = bool(previous_token_hash)
         minted = mint_goal_token(
             workflow_id=state["workflow_id"],
             scope="build-flash,flash-debug",
@@ -1040,7 +1313,7 @@ def _stage_flash(
             flash_ctx = {
                 "target": target,
                 "port": state.get("context", {}).get("probe", ""),
-                "elf": "build/firmware.elf",
+                "elf": state.get("context", {}).get("elf", "") or "build/firmware.elf",
                 "probe": ctx.probe,
             }
             # P3 Step F: prefer probe-rs for cross-vendor flash, fall back
@@ -1094,6 +1367,8 @@ def _stage_flash(
                 "expires_at": goal_token_record["expires_at"],
                 "uses": goal_token_record["uses"],
                 "status": token_status,
+                "reissued_after_resume": reissued_after_resume,
+                **({"previous_token_hash": previous_token_hash} if previous_token_hash else {}),
             },
             "flash_executed": flash_executed,
             "flash_result": flash_result,
@@ -1253,6 +1528,42 @@ def _verify_signal(expected: dict[str, Any], observed_capture: str) -> dict[str,
     }
 
 
+def _observe_window_s() -> float:
+    """Bounded real-observation window in seconds (env override, default 8)."""
+    raw = os.environ.get("HARDWARE_BUTLER_OBSERVE_WINDOW_S", "")
+    try:
+        value = float(raw) if raw else 8.0
+    except ValueError:
+        value = 8.0
+    return max(1.0, min(30.0, value))
+
+
+def _extract_stream_text(stdout: str) -> str:
+    """Flatten JSON-Lines stream output (serial_monitor / probe_rs_rtt) into
+    plain text for signal verification. Non-JSON lines pass through."""
+    parts: list[str] = []
+    for line in stdout.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            item = json.loads(stripped)
+        except ValueError:
+            parts.append(stripped)
+            continue
+        if not isinstance(item, dict):
+            parts.append(stripped)
+            continue
+        text = ""
+        for key in ("data", "text", "line", "message", "content"):
+            value = item.get(key)
+            if isinstance(value, str) and value:
+                text = value
+                break
+        parts.append(text if text else stripped)
+    return "\n".join(parts)
+
+
 def _stage_debug_observe(
     root: Path,
     ctx: WorkflowContext,
@@ -1284,53 +1595,52 @@ def _stage_debug_observe(
 
     real_capture = ""
     observe_mode = "sim"
+    observe_errors: list[dict[str, str]] = []
     chip_stage = next((s for s in state["stages"] if s["id"] == "chip-selection"), None)
-    backends = (chip_stage or {}).get("evidence", {}).get("backends", {}) if chip_stage else {}
-    observe_backend = backends.get("backends", {}).get("observe", "unknown") if isinstance(backends.get("backends"), dict) else "unknown"
     enable_real = os.environ.get("HARDWARE_BUTLER_ENABLE_REAL_FLASH") == "1"
     if enable_real:
-        adapter = _get_vendor_adapter(state)
-        if adapter:
-            observe_ctx = {
-                "port": state.get("context", {}).get("probe", ""),
-                "baud": "115200",
-                "target": state.get("context", {}).get("target", ""),
-                "probe": ctx.probe,
-            }
-            # P3 Step F: prefer probe-rs rtt (cross-vendor), then pyserial
-            # (UART), then adapter native observe_command, then embeddedskills.
-            probe_rs_cmd = adapter.observe_via_probe_rs(observe_ctx)
-            if probe_rs_cmd:
-                observe_result = _run_subprocess(probe_rs_cmd, timeout_s=10)
-                if observe_result["status"] == "ok":
-                    real_capture = observe_result.get("stdout", "")
-                    observe_mode = "probe-rs-rtt"
-            if not real_capture:
-                pyserial_cmd = adapter.observe_via_pyserial(observe_ctx)
-                if pyserial_cmd:
-                    observe_result = _run_subprocess(pyserial_cmd, timeout_s=10)
-                    if observe_result["status"] == "ok":
-                        real_capture = observe_result.get("stdout", "")
-                        observe_mode = "pyserial"
-            if not real_capture:
+        # Bounded, non-interactive capture window (interactive tools like
+        # miniterm or `probe-rs rtt attach` hang under captured stdout and
+        # never produce output, so they must not be used here).
+        window_s = _observe_window_s()
+        selected_part = ""
+        if chip_stage and chip_stage["status"] == "completed":
+            selected_part = chip_stage.get("evidence", {}).get("selected_part", "")
+        port = str(ctx.probe or state.get("context", {}).get("probe", ""))
+        if port.upper().startswith("COM") or port.startswith("/dev/"):
+            args = ["--port", port, "--timeout", str(window_s), "--json"]
+            result = _run_embeddedskills_script("serial/scripts/serial_monitor.py", args, timeout_s=int(window_s) + 30)
+            if result["status"] == "ok":
+                real_capture = _extract_stream_text(result.get("stdout", ""))
+                observe_mode = "pyserial-window"
+            else:
+                observe_errors.append({"backend": "serial_monitor", "reason": result.get("stderr", "")[-300:]})
+        import shutil as _shutil
+        if not real_capture and selected_part and _shutil.which("probe-rs"):
+            args = ["--chip", selected_part, "--duration", str(window_s), "--workspace", str(root), "--json"]
+            result = _run_embeddedskills_script("probe-rs/scripts/probe_rs_rtt.py", args, timeout_s=int(window_s) + 45)
+            if result["status"] == "ok":
+                real_capture = _extract_stream_text(result.get("stdout", ""))
+                observe_mode = "probe-rs-rtt-window"
+            else:
+                observe_errors.append({"backend": "probe_rs_rtt", "reason": result.get("stderr", "")[-300:]})
+        if not real_capture:
+            adapter = _get_vendor_adapter(state)
+            if adapter:
+                observe_ctx = {
+                    "port": port,
+                    "baud": "115200",
+                    "target": selected_part or state.get("context", {}).get("target", ""),
+                    "probe": ctx.probe,
+                }
                 cmd = adapter.observe_command(observe_ctx)
                 if cmd:
-                    observe_result = _run_subprocess(cmd, timeout_s=10)
-                    if observe_result["status"] == "ok":
-                        real_capture = observe_result.get("stdout", "")
-                        observe_mode = adapter.family
-        elif observe_backend == "serial":
-            serial_args = ["--workspace", str(root), "--action", "scan"]
-            serial_result = _run_embeddedskills_script("serial/scripts/serial_scan.py", serial_args, timeout_s=20)
-            if serial_result["status"] == "ok":
-                real_capture = serial_result.get("stdout", "")
-                observe_mode = "serial"
-        elif observe_backend == "jlink-rtt":
-            rtt_args = ["--workspace", str(root), "--action", "rtt-read"]
-            rtt_result = _run_embeddedskills_script("jlink/scripts/jlink_rtt.py", rtt_args, timeout_s=20)
-            if rtt_result["status"] == "ok":
-                real_capture = rtt_result.get("stdout", "")
-                observe_mode = "rtt"
+                    result = _run_subprocess(cmd, timeout_s=int(window_s) + 30)
+                    if result["status"] == "ok":
+                        real_capture = _extract_stream_text(result.get("stdout", ""))
+                        observe_mode = f"{adapter.family}-native"
+                    else:
+                        observe_errors.append({"backend": adapter.family, "reason": result.get("stderr", "")[-300:]})
 
     observations = []
     sim_capture = ""
@@ -1373,6 +1683,7 @@ def _stage_debug_observe(
             "observations": observations,
             "hardware_observed": observe_mode != "sim",
             "capture": real_capture[:2000] if real_capture else "",
+            "observe_errors": observe_errors,
             "note": f"{observe_mode} mode observation",
         },
     )

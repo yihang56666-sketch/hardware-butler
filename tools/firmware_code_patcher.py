@@ -42,6 +42,14 @@ def gpio_symbols(pin: str) -> tuple[str, str]:
     return f"GPIO{port}", f"GPIO_PIN_{int(number)}"
 
 
+def gpio_clock_enable(port: str) -> str:
+    """RCC AHB1 enable macro line for a GPIO port; empty for unknown ports."""
+    match = re.fullmatch(r"GPIO([A-K])", port.strip().upper())
+    if not match:
+        return ""
+    return f"    __HAL_RCC_GPIO{match.group(1)}_CLK_ENABLE();"
+
+
 def preview_patch(root: Path, *, feature: str, pin: str = "", function: str = "", rtos: bool = True) -> dict[str, Any]:
     root = root.resolve()
     plan = firmware_intent_planner.plan_implementation(root, feature=feature, pin=pin, function=function, rtos=rtos)
@@ -399,6 +407,7 @@ def render_source(module: str, plan: dict[str, Any], *, pin: str) -> str:
 def render_gpio_source(module: str, port: str, gpio_pin: str, plan: dict[str, Any]) -> str:
     delay_fn = "osDelay" if plan["freertos"].get("enabled") else "HAL_Delay"
     include_rtos = '#include "cmsis_os.h"\n' if plan["freertos"].get("enabled") else ""
+    clock_enable = gpio_clock_enable(port)
     return f"""#include "app_{module}.h"
 {include_rtos}
 static uint8_t app_{module}_enabled;
@@ -406,6 +415,7 @@ static uint8_t app_{module}_enabled;
 void app_{module}_init(void)
 {{
     app_{module}_enabled = 0U;
+{clock_enable}
     HAL_GPIO_WritePin({port}, {gpio_pin}, GPIO_PIN_RESET);
 }}
 

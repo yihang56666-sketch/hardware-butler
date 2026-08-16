@@ -161,28 +161,63 @@ def test_flash_stage_mints_goal_token_on_first_run(cubemx_basic_fixture: Path, t
     persisted = wr.load_workflow_state(project)
     assert persisted is not None
     assert persisted["goal_token"]["token_hash"] == gt["token_hash"]
-    assert "_plaintext" in persisted["goal_token"]
+    assert "_plaintext" not in persisted["goal_token"]
 
 
-def test_flash_stage_reuses_goal_token_on_resume(cubemx_basic_fixture: Path, tmp_path: Path) -> None:
-    """Re-running flash stage after resume must NOT mint a new token; reuse existing."""
+def test_flash_stage_reissues_ephemeral_goal_token_on_resume(cubemx_basic_fixture: Path, tmp_path: Path) -> None:
+    """A persisted workflow has no plaintext token, so resume must reissue one."""
     project = _copy_fixture(cubemx_basic_fixture, tmp_path)
     ctx = wr.WorkflowContext(feature="led-blink", pin="PD12", function="gpio-output")
     state = wr.init_workflow(project, intent="develop-feature", goal="LED blink", context=ctx)
     first = wr.run_workflow(project, state)
     first_hash = first["goal_token"]["token_hash"]
-    first_uses = first["goal_token"]["uses"]
 
     loaded = wr.load_workflow_state(project)
     assert loaded is not None
+    assert "_plaintext" not in loaded["goal_token"]
     flash_stage = next(s for s in loaded["stages"] if s["id"] == "flash")
     flash_stage["status"] = "pending"
     flash_stage["attempts"] = 0
     loaded["stages"][-1]["status"] = "pending"
     loaded["stages"][-1]["attempts"] = 0
     second = wr.run_workflow(project, loaded)
-    assert second["goal_token"]["token_hash"] == first_hash
-    assert second["goal_token"]["uses"] == first_uses + 1
+    assert second["goal_token"]["token_hash"] != first_hash
+    assert second["goal_token"]["uses"] == 1
+    second_flash = next(s for s in second["stages"] if s["id"] == "flash")
+    assert second_flash["evidence"]["goal_token"]["reissued_after_resume"] is True
+    assert second_flash["evidence"]["goal_token"]["previous_token_hash"] == first_hash
+
+
+def test_public_workflow_state_redacts_plaintext_without_mutating_internal_state() -> None:
+    state = {
+        "schema_version": 1,
+        "goal_token": {
+            "token_hash": "abc123",
+            "_plaintext": "hwg1-secret",
+        },
+        "stages": [],
+    }
+
+    public = wr.public_workflow_state(state)
+
+    assert public["goal_token"] == {"token_hash": "abc123"}
+    assert state["goal_token"]["_plaintext"] == "hwg1-secret"
+
+
+def test_load_workflow_state_scrubs_legacy_plaintext_from_disk(tmp_path: Path) -> None:
+    project = tmp_path / "legacy-project"
+    state_path = wr.workflow_state_path(project)
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text(
+        '{"schema_version": 1, "goal_token": {"token_hash": "abc", "_plaintext": "hwg1-secret"}}',
+        encoding="utf-8",
+    )
+
+    loaded = wr.load_workflow_state(project)
+
+    assert loaded is not None
+    assert "_plaintext" not in loaded["goal_token"]
+    assert "_plaintext" not in state_path.read_text(encoding="utf-8")
 
 
 def test_debug_observe_extracts_led_signal_from_firmware_plan(cubemx_basic_fixture: Path, tmp_path: Path) -> None:

@@ -38,6 +38,38 @@ python <skill-dir>\scripts\run_hardware_butler.py onboard --root <project-root> 
 
 The wrapper sets `HARDWARE_BUTLER_WORKSPACE_ROOT` to the caller's current directory and executes the packaged runtime from the plugin, so report writes stay inside the active workspace.
 
+## One-Sentence Workflow (preferred for "make it do X" requests)
+
+When the user states a goal in one sentence ("LED blink on PD12", "read the I2C sensor and print over UART"), do NOT assemble per-step commands. Drive the 9-stage goal workflow (requirement-parse → chip-selection → datasheet-collect → cubemx-config → firmware-plan → build → flash → debug-observe → verify-goal) instead:
+
+```powershell
+python <skill-dir>\scripts\run_hardware_butler.py workflow-run --root <project-root> --intent develop-feature --goal "<user goal>" --json
+```
+
+The runner generates the firmware app module (LLM-written when `.hardware-butler/llm-config.json` has `"codegen": true`, deterministic templates otherwise), scaffolds main.c/main.h, really compiles via PlatformIO when installed, and iterates on build/verify failures on its own.
+
+Host-agent resume loop — when the JSON result shows `"status": "blocked-needs-input"`, the workflow is waiting for YOU (the host agent) to execute a task, then resume:
+
+1. `instruction` mentions LLM tasks (intent parse, chip candidates, codegen, failure analysis):
+   ```powershell
+   python <skill-dir>\scripts\run_hardware_butler.py workflow-llm-tasks --root <project-root> --json
+   ```
+   Execute each pending task's prompt yourself (you are the LLM), then append one JSON line `{"task_id": "<id>", "text": "<your answer>"}` to `<project-root>\.hardware-butler\llm-responses.jsonl`, then:
+   ```powershell
+   python <skill-dir>\scripts\run_hardware_butler.py workflow-run --root <project-root> --resume --json
+   ```
+   Repeat until the workflow stops asking. This is the default `claude-code` provider mode (aliases: `codex`, `host-agent`); it works from inside Codex, Claude Code, or Cursor without any API key.
+2. `instruction` mentions datasheet search: run `workflow-search --root <project-root> --json`, use web search to fill `.hardware-butler/datasheet-evidence.json` as its instruction describes, then `workflow-run --resume`.
+3. Chip selection blocked with candidates: either re-run with `--part <chosen>` or add `--auto-select` to take the first LLM candidate.
+
+Progress/status at any time:
+
+```powershell
+python <skill-dir>\scripts\run_hardware_butler.py workflow-status --root <project-root> --json
+```
+
+Real flashing stays gated: without `HARDWARE_BUTLER_ENABLE_REAL_FLASH=1` the flash stage produces a runbook + goal_token record only. Keep it that way unless the user explicitly prepared a bench.
+
 ## Command Guide
 
 Use these packaged commands instead of reimplementing scanners:
@@ -60,6 +92,12 @@ python <skill-dir>\scripts\run_hardware_butler.py patch-ioc --root <project-root
 python <skill-dir>\scripts\run_hardware_butler.py firmware-integrate --root <project-root> --feature led-blink --pin PD12 --function gpio-output --json
 python <skill-dir>\scripts\run_hardware_butler.py bench-runbook --root <project-root> --action build-flash --target <chip> --probe <probe> --voltage <voltage> --current-limit <limit> --erase-scope <scope> --recovery <path> --backend openocd --json
 python <skill-dir>\scripts\run_hardware_butler.py safety-audit --root <project-root> --json
+python <skill-dir>\scripts\run_hardware_butler.py workflow-run --root <project-root> --intent develop-feature --goal "<goal>" --json
+python <skill-dir>\scripts\run_hardware_butler.py workflow-run --root <project-root> --resume --json
+python <skill-dir>\scripts\run_hardware_butler.py workflow-status --root <project-root> --json
+python <skill-dir>\scripts\run_hardware_butler.py workflow-llm-tasks --root <project-root> --json
+python <skill-dir>\scripts\run_hardware_butler.py workflow-search --root <project-root> --json
+python <skill-dir>\scripts\run_hardware_butler.py workflow-llm-config --root <project-root> --provider claude-code --codegen on --json
 ```
 
 Write `.embeddedskills/config.json` only when all required inputs are explicit and the user has approved the write:

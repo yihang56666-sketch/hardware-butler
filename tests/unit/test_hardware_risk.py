@@ -20,6 +20,11 @@ def copy_fixture(name: str) -> Path:
     if target.exists():
         shutil.rmtree(target)
     shutil.copytree(FIXTURE, target)
+    # The fixture ships pre-built chip documents (docs/chip/...); this test
+    # verifies the missing-documents risk path, so strip them after copying.
+    chip_docs = target / "docs" / "chip"
+    if chip_docs.exists():
+        shutil.rmtree(chip_docs)
     return target
 
 

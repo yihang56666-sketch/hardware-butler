@@ -14,6 +14,7 @@ from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QComboBox,
     QFileDialog,
     QFrame,
@@ -52,9 +53,10 @@ TAB_ASK = 4
 TAB_OVERVIEW = 5
 TAB_TASKS = 6
 TAB_ACTIONS = 7
-TAB_REPORTS = 8
-TAB_TUTORIAL = 9
-TAB_OUTPUT = 10
+TAB_WORKFLOW = 8
+TAB_REPORTS = 9
+TAB_TUTORIAL = 10
+TAB_OUTPUT = 11
 
 
 def frozen_cli_candidates() -> list[Path]:
@@ -158,6 +160,7 @@ class HardwareButlerWindow(QMainWindow):
         self.tabs.addTab(self.overview_tab(), "总览")
         self.tabs.addTab(self.task_tab(), "任务")
         self.tabs.addTab(self.actions_tab(), "动作")
+        self.tabs.addTab(self.workflow_tab(), "工作流")
         self.tabs.addTab(self.reports_tab(), "报告")
         self.tabs.addTab(self.tutorial_tab(), "教程")
         self.tabs.addTab(self.output_tab(), "输出")
@@ -632,6 +635,168 @@ class HardwareButlerWindow(QMainWindow):
         layout.addWidget(self.task_table, 1)
         return page
 
+    def workflow_tab(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 10, 0, 0)
+        layout.setSpacing(10)
+
+        hint = QLabel(
+            "一句话目标驱动 9 阶段工作流：需求解析 → 选型 → 资料 → CubeMX → 固件生成（可 LLM 编写）→ 构建（可真实编译）→ 烧录（默认只出 runbook）→ 观测 → 验证。"
+            "结果为 blocked-needs-input 时按提示处理后再恢复运行。"
+        )
+        hint.setObjectName("pageHint")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+
+        form = QGridLayout()
+        form.setHorizontalSpacing(10)
+        form.setVerticalSpacing(8)
+        self.wf_goal_input = QLineEdit()
+        self.wf_goal_input.setPlaceholderText("一句话目标，例如：LED blink on PD12")
+        self.wf_feature_input = QLineEdit()
+        self.wf_feature_input.setPlaceholderText("可选：led-blink")
+        self.wf_pin_input = QLineEdit()
+        self.wf_pin_input.setPlaceholderText("可选：PD12")
+        self.wf_function_input = QLineEdit()
+        self.wf_function_input.setPlaceholderText("可选：gpio-output / i2c / uart")
+        self.wf_part_input = QLineEdit()
+        self.wf_part_input.setPlaceholderText("可选：STM32F407VGTx")
+        self.wf_probe_input = QLineEdit()
+        self.wf_probe_input.setPlaceholderText("可选：探针或串口，如 stlink-v3 / COM3")
+        self.wf_auto_select = QCheckBox("无芯片时自动选择第一个 LLM 候选")
+        form.addWidget(QLabel("目标"), 0, 0)
+        form.addWidget(self.wf_goal_input, 0, 1)
+        form.addWidget(QLabel("功能名"), 1, 0)
+        form.addWidget(self.wf_feature_input, 1, 1)
+        form.addWidget(QLabel("引脚"), 2, 0)
+        form.addWidget(self.wf_pin_input, 2, 1)
+        form.addWidget(QLabel("外设功能"), 3, 0)
+        form.addWidget(self.wf_function_input, 3, 1)
+        form.addWidget(QLabel("芯片"), 4, 0)
+        form.addWidget(self.wf_part_input, 4, 1)
+        form.addWidget(QLabel("探针/串口"), 5, 0)
+        form.addWidget(self.wf_probe_input, 5, 1)
+        form.addWidget(self.wf_auto_select, 6, 1)
+        layout.addLayout(form)
+
+        controls = QHBoxLayout()
+        run_wf = QPushButton("运行工作流")
+        run_wf.clicked.connect(self.run_workflow)
+        resume_wf = QPushButton("恢复运行")
+        resume_wf.clicked.connect(self.run_workflow_resume)
+        status_wf = QPushButton("查看状态")
+        status_wf.clicked.connect(self.run_workflow_status)
+        llm_wf = QPushButton("待办 LLM 任务")
+        llm_wf.clicked.connect(self.run_workflow_llm_tasks)
+        controls.addWidget(run_wf)
+        controls.addWidget(resume_wf)
+        controls.addWidget(status_wf)
+        controls.addWidget(llm_wf)
+        controls.addStretch()
+        layout.addLayout(controls)
+        self.command_buttons.extend([run_wf, resume_wf, status_wf, llm_wf])
+
+        self.wf_status_label = QLabel("尚未运行工作流。")
+        self.wf_status_label.setObjectName("pageHint")
+        self.wf_status_label.setWordWrap(True)
+        layout.addWidget(self.wf_status_label)
+
+        self.wf_phase_table = QTableWidget(0, 4)
+        self.wf_phase_table.setHorizontalHeaderLabels(["阶段", "状态", "尝试", "错误"])
+        self.wf_phase_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        self.wf_phase_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self.wf_phase_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.wf_phase_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        self.wf_phase_table.verticalHeader().setVisible(False)
+        self.wf_phase_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        layout.addWidget(self.wf_phase_table, 2)
+
+        llm_box = QGroupBox("待办 LLM 任务（宿主代理模式：由你/宿主 AI 作答）")
+        llm_layout = QVBoxLayout(llm_box)
+        llm_hint = QLabel(
+            "默认 claude-code 提供方把 LLM 调用转成任务文件。作答后把一行 JSON "
+            '{"task_id": "...", "text": "<答案>"} 追加到 <项目>\\.hardware-butler\\llm-responses.jsonl，'
+            "然后点“恢复运行”。"
+        )
+        llm_hint.setWordWrap(True)
+        llm_layout.addWidget(llm_hint)
+        self.wf_llm_table = QTableWidget(0, 2)
+        self.wf_llm_table.setHorizontalHeaderLabels(["任务 ID", "提示（截断）"])
+        self.wf_llm_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        self.wf_llm_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.wf_llm_table.verticalHeader().setVisible(False)
+        self.wf_llm_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        llm_layout.addWidget(self.wf_llm_table)
+        layout.addWidget(llm_box, 1)
+        return page
+
+    def run_workflow(self) -> None:
+        goal = self.wf_goal_input.text().strip()
+        if not goal:
+            self.append_output("请先输入一句话目标。")
+            self.tabs.setCurrentIndex(TAB_WORKFLOW)
+            return
+        argv = self.cli(
+            "workflow-run", "--root", self.project_root(),
+            "--intent", "develop-feature", "--goal", goal, "--json",
+        )
+        for flag, widget in (
+            ("--feature", self.wf_feature_input),
+            ("--pin", self.wf_pin_input),
+            ("--function", self.wf_function_input),
+            ("--part", self.wf_part_input),
+            ("--probe", self.wf_probe_input),
+        ):
+            value = widget.text().strip()
+            if value:
+                argv.extend([flag, value])
+        if self.wf_auto_select.isChecked():
+            argv.append("--auto-select")
+        self.run_command(argv)
+
+    def run_workflow_resume(self) -> None:
+        self.run_command(self.cli("workflow-run", "--root", self.project_root(), "--resume", "--json"))
+
+    def run_workflow_status(self) -> None:
+        self.run_command(self.cli("workflow-status", "--root", self.project_root(), "--json"))
+
+    def run_workflow_llm_tasks(self) -> None:
+        self.run_command(self.cli("workflow-llm-tasks", "--root", self.project_root(), "--json"))
+
+    def apply_workflow_state(self, state: dict[str, Any]) -> None:
+        status = str(state.get("status", ""))
+        current = str(state.get("current_stage", ""))
+        goal = str(state.get("goal", ""))
+        self.wf_status_label.setText(
+            f"状态: {status or '-'}    当前阶段: {current or '(无)'}    目标: {goal or '-'}"
+        )
+        stages = state.get("stages")
+        if not isinstance(stages, list):
+            return
+        self.wf_phase_table.setRowCount(0)
+        for stage in stages:
+            if not isinstance(stage, dict):
+                continue
+            row = self.wf_phase_table.rowCount()
+            self.wf_phase_table.insertRow(row)
+            self.wf_phase_table.setItem(row, 0, QTableWidgetItem(str(stage.get("id", ""))))
+            self.wf_phase_table.setItem(row, 1, QTableWidgetItem(str(stage.get("status", ""))))
+            self.wf_phase_table.setItem(row, 2, QTableWidgetItem(str(stage.get("attempts", ""))))
+            error = str(stage.get("error", "") or "")
+            self.wf_phase_table.setItem(row, 3, QTableWidgetItem(error[:200]))
+
+    def apply_workflow_llm_tasks(self, pending: list[Any]) -> None:
+        self.wf_llm_table.setRowCount(0)
+        for task in pending:
+            if not isinstance(task, dict):
+                continue
+            row = self.wf_llm_table.rowCount()
+            self.wf_llm_table.insertRow(row)
+            self.wf_llm_table.setItem(row, 0, QTableWidgetItem(str(task.get("task_id", ""))))
+            prompt = str(task.get("prompt", "") or "")
+            self.wf_llm_table.setItem(row, 1, QTableWidgetItem(prompt[:300]))
+
     def recommendation_panel(self) -> QGroupBox:
         box = QGroupBox("推荐下一步")
         layout = QVBoxLayout(box)
@@ -990,6 +1155,12 @@ class HardwareButlerWindow(QMainWindow):
         if not data:
             self.append_output(f"退出码: {code}")
         self.set_running(False, "完成" if code == 0 else f"失败: {code}")
+        state = data.get("state") if isinstance(data, dict) else None
+        if isinstance(state, dict) and isinstance(state.get("stages"), list):
+            self.apply_workflow_state(state)
+        pending = data.get("pending") if isinstance(data, dict) else None
+        if isinstance(pending, list):
+            self.apply_workflow_llm_tasks(pending)
         if data.get("part") and data.get("documents_dir"):
             QTimer.singleShot(0, self.run_workbench)
 

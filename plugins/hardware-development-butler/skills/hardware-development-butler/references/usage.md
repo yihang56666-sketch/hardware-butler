@@ -45,6 +45,43 @@ Main command meanings:
 - `bench-runbook`: generate a no-hardware bench execution manual that aggregates readiness, action-plan evidence, preflight checks, artifact hash binding, and an actual `workflow_run.py --dry-run --json` subprocess result. It does not execute hardware actions, consume tokens, or write safety log/state/config.
 - `bench-preflight`: validate a prepared workflow command package without consuming tokens, touching hardware, writing safety logs, or exposing raw token argv.
 - `workflow-dry-run`: prepare build/flash/debug/observe workflow argv with redacted tokens and no subprocess execution or state/config writes.
+- `workflow-run`: drive the 9-stage goal workflow (requirement-parse → chip-selection → datasheet-collect → cubemx-config → firmware-plan → build → flash → debug-observe → verify-goal). Generates the firmware app module (LLM-written when codegen is enabled, templates otherwise), scaffolds main.c/main.h, really compiles via PlatformIO when installed, and retries build/verify failures (optimize-loop, max 3 attempts). `--resume` continues from `.hardware-butler/workflow-state.json`. `--auto-select` takes the first LLM chip candidate instead of blocking.
+- `workflow-status`: print the persisted workflow state and per-stage progress.
+- `workflow-llm-tasks`: print pending LLM tasks (prompts) the host agent must execute and answer into `.hardware-butler/llm-responses.jsonl`.
+- `workflow-search`: print the pending datasheet search task for host-agent web search; answers go to `.hardware-butler/datasheet-evidence.json`.
+- `workflow-llm-config`: show or set the LLM provider config (`--provider claude-code|anthropic|openai|local`, `--api-key-env <ENV_VAR_NAME>`, `--model`, `--base-url`, `--max-tokens`, `--codegen on|off`). Keys are read from environment variables only; never store key values in files.
+
+## One-sentence goal workflow (host-agent driver loop)
+
+The default closed loop when the user states a goal in one sentence:
+
+```powershell
+python <skill-dir>\scripts\run_hardware_butler.py workflow-run --root <project-root> --intent develop-feature --goal "<user goal>" --json
+```
+
+When the result is `"status": "blocked-needs-input"`, the workflow is waiting on the HOST AGENT (you). Handle each blocker, then re-run with `--resume`:
+
+1. **LLM tasks pending** (requirement parsing, chip candidates, codegen, failure analysis — the default `claude-code` provider delegates LLM calls to you; `codex` and `host-agent` are aliases of the same mode):
+   ```powershell
+   python <skill-dir>\scripts\run_hardware_butler.py workflow-llm-tasks --root <project-root> --json
+   ```
+   For each pending task: answer its prompt yourself, then append exactly one JSON line to `<project-root>\.hardware-butler\llm-responses.jsonl`:
+   ```json
+   {"task_id": "<task_id from the pending list>", "text": "<your answer, following the prompt's output format>"}
+   ```
+   Then `workflow-run --root <project-root> --resume --json`. Repeat until no LLM tasks remain pending.
+2. **Datasheet search pending**: run `workflow-search --root <project-root> --json`, perform the web searches it lists, write the JSON object it describes to `.hardware-butler/datasheet-evidence.json`, then resume.
+3. **Chip selection with candidates**: re-run with `--part <chosen>` (recommended — show the user the candidates), or pass `--auto-select` on a fresh run to accept the first candidate automatically.
+
+Opting into LLM-written firmware (instead of deterministic templates):
+
+```powershell
+python <skill-dir>\scripts\run_hardware_butler.py workflow-llm-config --root <project-root> --codegen on --max-tokens 8192 --json
+```
+
+With the claude-code/host-agent provider this means the codegen task also arrives via `workflow-llm-tasks` and you write the module code yourself. With `anthropic`/`openai`/`local` providers (API key via env var named in `--api-key-env`) the runner calls the API directly and falls back to templates on any failure.
+
+Real flashing stays gated behind `HARDWARE_BUTLER_ENABLE_REAL_FLASH=1` plus a valid goal_token; without it the flash stage emits a runbook only. Do not set that variable unless the user has prepared the bench.
 
 Recommended first closed loop:
 

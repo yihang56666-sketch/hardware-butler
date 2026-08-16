@@ -25,7 +25,9 @@ def copy_fixture(name: str) -> Path:
 
 def test_build_evidence_index_writes_machine_readable_local_index() -> None:
     project = copy_fixture("basic")
-    (project / "docs" / "chip" / "STM32F407VGTx").mkdir(parents=True)
+    # The fixture now ships docs/chip/STM32F407VGTx itself; exist_ok keeps
+    # this test working on both the bare and enriched fixture.
+    (project / "docs" / "chip" / "STM32F407VGTx").mkdir(parents=True, exist_ok=True)
     (project / "docs" / "chip" / "STM32F407VGTx" / "source-map.md").write_text(
         "# Source Map\n\n- official datasheet: unknown\n",
         encoding="utf-8",

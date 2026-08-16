@@ -104,8 +104,11 @@ def test_build_stage_returns_completed_when_pio_compile_succeeds(tmp_path: Path)
 
 
 @pytest.mark.enable_platformio
-def test_build_stage_stays_completed_when_no_pio_no_tools(tmp_path: Path) -> None:
+def test_build_stage_stays_completed_when_no_pio_no_tools(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """When pio is not on PATH and no build tools, stage stays plan-only (completed)."""
+    # The adapter also searches parent dirs for a project-local .venv pio;
+    # disable PlatformIO entirely so this test is isolated from the host env.
+    monkeypatch.setenv("HARDWARE_BUTLER_DISABLE_PLATFORMIO", "1")
     fixture = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "cubemx-basic"
     project = _copy_fixture(fixture, tmp_path / "build-plan" / "project")
     ctx = wr.WorkflowContext(feature="led-blink", pin="PD12", function="gpio-output")

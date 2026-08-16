@@ -33,6 +33,11 @@ class LLMConfig:
     model: str = ""
     base_url: str = ""
     timeout_s: int = 30
+    max_tokens: int = 1024
+    # Opt-in: allow the workflow to ask the LLM to WRITE firmware code
+    # (app modules / drivers), not just parse intent. Default off so the
+    # template generator stays the deterministic baseline.
+    codegen: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -41,6 +46,8 @@ class LLMConfig:
             "model": self.model,
             "base_url": self.base_url,
             "timeout_s": self.timeout_s,
+            "max_tokens": self.max_tokens,
+            "codegen": self.codegen,
         }
 
 
@@ -56,12 +63,20 @@ def load_config(root: Path) -> LLMConfig:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return LLMConfig()
+    provider = str(data.get("provider", "claude-code"))
+    # "codex"/"host-agent" are aliases for the host-agent task-file mode
+    # (the workflow is driven from inside Codex/Claude Code/Cursor, which
+    # executes llm-tasks itself instead of HTTP calls).
+    if provider in ("codex", "host-agent"):
+        provider = "claude-code"
     return LLMConfig(
-        provider=data.get("provider", "claude-code"),
+        provider=provider,
         api_key_env=data.get("api_key_env", ""),
         model=data.get("model", ""),
         base_url=data.get("base_url", ""),
         timeout_s=int(data.get("timeout_s", 30)),
+        max_tokens=int(data.get("max_tokens", 1024)),
+        codegen=bool(data.get("codegen", False)),
     )
 
 

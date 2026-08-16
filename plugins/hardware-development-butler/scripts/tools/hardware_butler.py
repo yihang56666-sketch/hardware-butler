@@ -526,6 +526,7 @@ def main(argv: list[str] | None = None) -> None:
     wf_run_p.add_argument("--target", default="")
     wf_run_p.add_argument("--probe", default="")
     wf_run_p.add_argument("--backend", default="")
+    wf_run_p.add_argument("--auto-select", action="store_true", help="Auto-select the first LLM chip candidate when no --part and no CubeMX detection")
     wf_run_p.add_argument("--resume", action="store_true")
     wf_run_p.add_argument("--json", action="store_true", dest="as_json")
     wf_run_p.add_argument("--out", default="")
@@ -552,6 +553,8 @@ def main(argv: list[str] | None = None) -> None:
     wf_llm_config_p.add_argument("--model", default="")
     wf_llm_config_p.add_argument("--base-url", default="")
     wf_llm_config_p.add_argument("--timeout", type=int, default=0)
+    wf_llm_config_p.add_argument("--max-tokens", type=int, default=0)
+    wf_llm_config_p.add_argument("--codegen", choices=["on", "off"], default="")
     wf_llm_config_p.add_argument("--json", action="store_true", dest="as_json")
     wf_llm_config_p.add_argument("--out", default="")
 
@@ -820,8 +823,11 @@ def main(argv: list[str] | None = None) -> None:
             state = workflow_runner.init_workflow(
                 root, intent=args.intent, goal=args.goal, context=ctx
             )
+            if args.auto_select:
+                state["context"]["auto_select"] = True
         state = workflow_runner.run_workflow(root, state)
-        data = {"schema_version": 1, "state": state, "summary": workflow_runner.workflow_summary(state)}
+        public_state = workflow_runner.public_workflow_state(state)
+        data = {"schema_version": 1, "state": public_state, "summary": workflow_runner.workflow_summary(public_state)}
         output(data, as_json=args.as_json, out=args.out)
     elif args.command == "workflow-status":
         root = Path(args.root)
@@ -829,7 +835,8 @@ def main(argv: list[str] | None = None) -> None:
         if state is None:
             output({"schema_version": 1, "status": "no-workflow", "root": str(root)}, as_json=args.as_json)
         else:
-            output({"schema_version": 1, "state": state, "summary": workflow_runner.workflow_summary(state)}, as_json=args.as_json, out=args.out)
+            public_state = workflow_runner.public_workflow_state(state)
+            output({"schema_version": 1, "state": public_state, "summary": workflow_runner.workflow_summary(public_state)}, as_json=args.as_json, out=args.out)
     elif args.command == "workflow-search":
         root = Path(args.root)
         task_path = root / ".hardware-butler" / "search-tasks.json"
@@ -866,7 +873,7 @@ def main(argv: list[str] | None = None) -> None:
     elif args.command == "workflow-llm-config":
         root = Path(args.root)
         import llm_config as _llm_cfg
-        if args.provider or args.api_key_env or args.model or args.base_url or args.timeout:
+        if args.provider or args.api_key_env or args.model or args.base_url or args.timeout or args.max_tokens or args.codegen:
             current = _llm_cfg.load_config(root)
             new_config = _llm_cfg.LLMConfig(
                 provider=args.provider or current.provider,
@@ -874,6 +881,8 @@ def main(argv: list[str] | None = None) -> None:
                 model=args.model or current.model,
                 base_url=args.base_url or current.base_url,
                 timeout_s=args.timeout if args.timeout else current.timeout_s,
+                max_tokens=args.max_tokens if args.max_tokens else current.max_tokens,
+                codegen=(args.codegen == "on") if args.codegen else current.codegen,
             )
             path = _llm_cfg.save_config(root, new_config)
             output({"schema_version": 1, "status": "saved", "config": new_config.to_dict(), "path": str(path)}, as_json=args.as_json, out=args.out)

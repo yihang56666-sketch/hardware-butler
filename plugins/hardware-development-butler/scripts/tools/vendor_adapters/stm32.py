@@ -116,7 +116,7 @@ class STM32Adapter(VendorAdapter):
         if "F411" in p:
             return "nucleo_f411re"
         if "F407" in p:
-            return "nucleo_f429zi"
+            return "disco_f407vg"
         if "F429" in p:
             return "nucleo_f429zi"
         if "F446" in p:
@@ -131,7 +131,10 @@ class STM32Adapter(VendorAdapter):
         return "ststm32"
 
     def _platformio_framework(self) -> str:
-        return "arduino"
+        # The workflow generates STM32 HAL code (Core/Src + Core/Inc), so the
+        # PlatformIO build must use the stm32cube framework that vendors HAL
+        # + CMSIS + startup/linker, not the Arduino core.
+        return "stm32cube"
 
 
 register_adapter(STM32Adapter())

@@ -4,6 +4,8 @@ __pycache__/
 
 # Local agent/client state
 **/.claude/settings.local.json
+.mimosa/
+.tmp-smoke/
 .agents/.agents/reports/
 .hardware-butler/
 study_notes/
@@ -37,6 +39,7 @@ plugins/hardware-development-butler/scripts/.ruff_cache/
 htmlcov/
 
 tests/.tmp-pytest/
+tests/.tmp-pytest-runtime/
 tests/.tmp-plugin-smoke/
 tests/tmp/
 plugins/hardware-development-butler/scripts/tests/.tmp-pytest/

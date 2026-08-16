@@ -204,14 +204,18 @@ Defined in [embeddedskills/safety_gate.py](../embeddedskills/safety_gate.py).
 
 - `max_uses=5`
 - `ttl_seconds=3600` (1 hour)
-- scope: `"build-flash-debug"`
+- scope: `"build-flash,flash-debug"`
 
 ### Where the runner uses it
 
 In `_stage_flash`, the runner calls `mint_goal_token` on first entry. The
-public record is persisted to `workflow-state.json["goal_token"]`. On resume,
-the existing token is reused and `uses` is incremented. Exhaustion blocks
-the next flash with `error_code: exhausted` and surfaces as `failed` stage.
+public record is persisted to `workflow-state.json["goal_token"]`; `_plaintext`
+is removed from persisted state and CLI output. The current process reuses its
+ephemeral token. If a persisted workflow must enter the flash stage again, the
+runner issues a fresh one-hour token and records `reissued_after_resume` plus
+the previous public token hash. Exhaustion blocks the next flash in the same
+process with `error_code: exhausted` and surfaces as a failed stage. Loading a
+legacy state file also scrubs any previously persisted plaintext in place.
 
 ---
 
@@ -275,6 +279,102 @@ The host Claude Code agent will execute LLM tasks. For production, switch to:
 | optimize-loop retry on verify-goal failure | Done | covered in test_workflow_runner.py |
 | sim-mode debug-observe | Done | covered in test_workflow_runner.py |
 | behavior keyword match in verify-goal | Done | covered in test_workflow_runner.py |
+| **P1: generate→compile coherence (2026-08-16)** | Done | test_firmware_project_scaffold.py + test_opensource_integration.py |
+
+#### P1 detail: the generated firmware now actually compiles
+
+Before P1 the workflow wrote `Core/Src/app_*.c` (STM32 HAL code) but the
+PlatformIO backend auto-generated a `platformio.ini` with
+`framework = arduino` and default `src/` layout — the generated code was
+never compiled. Empirically verified broken; now fixed and verified
+end-to-end:
+
+- `firmware_project_scaffold.py` (NEW): stub `main.c` is replaced with a
+  generated main that calls `app_<module>_init/start/task`; `main.h` is
+  created with the family-correct HAL include (part→`stm32f4xx_hal.h`);
+  a real CubeMX `main.c` (USER CODE blocks present) gets insertions
+  instead of replacement; custom mains are left untouched.
+- `vendor_adapters`: auto-generated `platformio.ini` now uses
+  `framework = stm32cube` + `src_dir = Core/Src` + `-ICore/Inc` when the
+  CubeMX layout exists; `find_pio()` extracted as a side-effect-free
+  probe; non-ASCII project paths (e.g. this workspace) stage the build
+  into `%TEMP%/hw-butler-pio/<hash>` because GNU ld cannot write its map
+  file under non-ASCII paths on Windows.
+- `workflow_runner`: `_stage_build` passes `part` (board mapping now
+  real, F407→`disco_f407vg`), resolves `firmware.elf/.bin/.hex` after a
+  successful build into `state.context.elf` (flash stage consumes it);
+  firmware-plan downgrades RTOS codegen to bare-metal when the PlatformIO
+  backend will build (stm32cube does not vendor CMSIS-RTOS) — intent stays
+  in the plan evidence.
+- GPIO template now emits `__HAL_RCC_GPIOx_CLK_ENABLE()` (without it the
+  pin write is a no-op on real silicon).
+- Empirical proof: full workflow on the fixture compiles via PlatformIO
+  and the resulting `firmware.elf` contains `app_led_blink_init/start/
+  set/task` + `main` symbols (checked with pyelftools).
+- **P2: LLM-written firmware codegen (2026-08-16)** | Done | test_llm_codegen.py (10 tests)
+- **P3: host-agent driver loop (2026-08-16)** | Done | test_chip_auto_select.py (4 tests)
+- **P4: bounded real observation (2026-08-16)** | Done | test_observe_capture.py (4 tests)
+- **P5: GUI workflow tab (2026-08-16)** | Done | manual GUI instantiation check
+- **P6: workflow token boundary hardening (2026-08-17)** | Done | test_workflow_runner.py + real state migration smoke |
+
+#### P3/P4/P5 detail
+
+- **P3**: `workflow-run --auto-select` takes the first LLM chip candidate
+  instead of blocking (evidence records `selection_mode:
+  llm-auto-select-first`). Provider aliases: `codex` / `host-agent`
+  normalize to the `claude-code` task-file mode, so one-sentence requests
+  work from inside Codex/Cursor with no API key. The driver loop is now
+  documented where host agents actually read it: plugin `SKILL.md`
+  (One-Sentence Workflow section + 6 workflow commands in the Command
+  Guide), `references/usage.md` (full resume loop incl. llm-responses.jsonl
+  answer format and codegen opt-in), and `agents/hardware-development-butler.md`.
+- **P4**: real observation rewritten. The old path ran interactive tools
+  (`python -m serial.tools.miniterm`, `probe-rs rtt attach`) under captured
+  stdout — they hang until timeout and never yield output. Now: bounded
+  non-interactive windows via embeddedskills `serial_monitor.py --port X
+  --timeout N --json` (when a COM//dev port is configured) then
+  `probe_rs_rtt.py --chip T --duration N --json` (when probe-rs is on PATH),
+  with `HARDWARE_BUTLER_OBSERVE_WINDOW_S` (1–30s, default 8), JSON-Lines
+  flattened by `_extract_stream_text`, failures recorded in
+  `observe_errors` evidence. `flash_via_probe_rs` now passes `--verify`
+  (post-flash readback check).
+- **P5**: GUI gained a 工作流 (workflow) tab — goal/feature/pin/function/
+  part/probe inputs + auto-select checkbox, run/resume/status/LLM-tasks
+  buttons, a 9-stage status table (updated from any workflow JSON result),
+  and a pending-LLM-task view with the llm-responses.jsonl answer
+  instructions. Tab inserted between 动作 and 报告 (TAB_WORKFLOW=8).
+  Datasheet collection was already integrated (资料中心/资料搜索 tabs).
+
+#### P2 detail: the LLM can now write the app module
+
+Opt-in via `workflow-llm-config --codegen on` (writes `"codegen": true`
+into `.hardware-butler/llm-config.json`; `--max-tokens` also settable).
+Default remains the deterministic templates.
+
+- `llm_codegen.py` (NEW): `generate_app_module()` asks the configured
+  provider to write the `app_<module>.h/.c` pair. Trust rules: the LLM
+  supplies CONTENTS only — paths are constructed here; the response must
+  pass contract validation (required init/start/set/task symbols, include
+  guard, no RTOS headers in bare-metal builds, no Arduino deps); a
+  brace-depth JSON scanner (`extract_json_object`) parses responses that
+  embed C code. Datasheet evidence (datasheet-evidence.json) is injected
+  into the prompt as ground truth when present.
+- `llm_client.call_llm` accepts `max_tokens` (codegen uses 8192; config
+  default stays 1024); new `generate_module_prompt` pins the exact API
+  contract so scaffold/main integration keeps working regardless of who
+  wrote the code.
+- `workflow_runner._stage_firmware_plan`: LLM first → templates on any
+  failure (never breaks the pipeline). claude-code provider + codegen
+  returns pending → stage blocked-needs-input with the task id (host
+  agent loop). Evidence records generator ("llm"|"template") per file.
+- Code-level failure patches: `analyze_failure_prompt` now allows
+  `patch_files`; `_llm_analyze_failure_and_patch` validates paths against
+  `Core/(Inc|Src)/app_*.[ch]` only (Drivers/, main.c, `..` escapes
+  rejected) and stores accepted contents in
+  `state.context.code_overrides` — these survive optimize-loop stage
+  resets and win per-file over whatever the next firmware-plan attempt
+  generates. `_parse_llm_json` delegates to the brace-depth scanner
+  (the old flat regex could not parse patch_files with C code inside).
 
 ### Done but not wired into workflow
 
@@ -607,9 +707,9 @@ pytest tests/unit/ -v --no-cov
 
 2. **Goal-level token, not keyless** — User explicitly rejected HMAC token
    upgrade in an earlier session, but goal_token was added as a compromise:
-   cryptographically random, workflow-scoped, bounded reuse. The plaintext
-   token stays in-memory for the session (acceptable for P1; P2 should move
-   to a session-kept secret store).
+   cryptographically random, workflow-scoped, bounded reuse. Plaintext exists
+   only in the current process; workflow state and CLI responses retain only
+   the public hash/metadata, and a disk resume reissues ephemeral authority.
 
 3. **Vendor adapters, not PlatformIO** — User wanted direct integration of
    each ecosystem's native tools (STM32CubeCLT, ESP-IDF, Code Composer
@@ -748,4 +848,3 @@ on real hardware (chip name format, probe selection, HAL call correctness)
 belong to parameter tuning, not architecture gaps — the code is structured
 so these fixes are local to the vendor adapter files, not across the
 workflow runner.
-

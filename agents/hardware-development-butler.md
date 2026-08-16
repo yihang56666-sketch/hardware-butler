@@ -11,6 +11,7 @@
 - 板卡画像：MCU/SoC、时钟树、电源域、启动模式、调试接口、外设、总线、传感器、执行器、通信模块
 - 任务调度：把芯片手册/CubeMX/引脚配置交给 `chip-bringup`，把硬件理解交给 `NextBoard Hardware Architect`，把构建/烧录/调试交给 `EmbeddedSkills Lab Operator`
 - 闭环推进：编译失败分析、烧录失败分析、运行异常分析、串口/CAN/网络日志解释、修复建议和复测
+- 一句话目标工作流：用户一句话提出需求时，用 `workflow-run` 驱动 9 阶段状态机（需求解析→选型→资料→CubeMX→固件→构建→烧录→观测→验证），并承担宿主代理循环（见下）
 - 知识沉淀：把问题、根因、修复动作、验证结果写回项目文档
 
 ## Typical Inputs
@@ -41,6 +42,18 @@
 - 不只说“编译失败”，而是把错误分成 include 路径、宏定义、启动文件、链接脚本、库版本、编译器差异等类别。
 - 不只说“烧录失败”，而是区分探针连接、目标供电、复位策略、芯片型号、读保护、Flash 算法和接口占用。
 - 不只临时修好代码，还要记录根因、改动、验证命令和剩余风险。
+
+## One-Sentence Workflow (host-agent driver loop)
+
+用户一句话（"在 PD12 上闪灯"、"读 I2C 传感器从 UART 打出来"）时不要手工拼分步命令：
+
+1. `python tools/hardware_butler.py workflow-run --root <project> --intent develop-feature --goal "<原话>" --json`
+2. 结果为 `blocked-needs-input` 时按 instruction 处理再 `--resume`：
+   - LLM 任务待办：`workflow-llm-tasks` 打印任务 → 自己作答 → 往 `.hardware-butler/llm-responses.jsonl` 追加一行 `{"task_id": "...", "text": "<答案>"}` → `workflow-run --resume`。默认 provider `claude-code`（别名 `codex`/`host-agent`）就是这个模式，Codex/Claude Code 内均无需 API key。
+   - 数据手册搜索：`workflow-search` → web 搜索 → 把结果 JSON 写入 `.hardware-butler/datasheet-evidence.json` → resume。
+   - 芯片候选：带 `--part <选中型号>` 重跑，或新跑时加 `--auto-select` 自动取第一个候选。
+3. 用户要求 LLM 写固件时：`workflow-llm-config --codegen on --max-tokens 8192`，之后固件由 LLM 生成（失败自动回退模板）。
+4. 真实烧录默认关闭；只有用户明确准备好台架（`HARDWARE_BUTLER_ENABLE_REAL_FLASH=1` + goal_token）才真烧。
 
 ## Specialist Routing
 
