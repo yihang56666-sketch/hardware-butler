@@ -78,6 +78,124 @@ def test_build_via_platformio_for_esp32(tmp_path: Path) -> None:
     assert (build_root / "platformio.ini").exists()
 
 
+# --- FreeRTOS on the PlatformIO backend (stm32cube framework) ---
+
+def test_freertos_capability_by_family() -> None:
+    """STM32 stm32cube builds can compile FreeRTOS; arduino/energia backends
+    on other families cannot via this mechanism (esp32 arduino has its own
+    FreeRTOS but a different codegen path that is not wired yet)."""
+    stm32 = vendor_adapters.get_adapter("stm32")
+    esp32 = vendor_adapters.get_adapter("esp32")
+    msp430 = vendor_adapters.get_adapter("msp430")
+    assert stm32 is not None and stm32.supports_freertos_on_platformio() is True
+    assert esp32 is not None and esp32.supports_freertos_on_platformio() is False
+    assert msp430 is not None and msp430.supports_freertos_on_platformio() is False
+
+
+@pytest.mark.enable_platformio
+def test_platformio_ini_rtos_adds_freertos_extra_script(tmp_path: Path) -> None:
+    """rtos=True must wire the generated pre-script that compiles the
+    framework-bundled FreeRTOS (stock stm32cube builder skips it)."""
+    adapter = vendor_adapters.get_adapter("stm32")
+    assert adapter is not None
+    project = tmp_path / "proj"
+    (project / "Core" / "Src").mkdir(parents=True)
+    (project / "Core" / "Inc").mkdir(parents=True)
+    with patch("shutil.which", return_value="/fake/pio"):
+        cmd = adapter.build_via_platformio(
+            {"project_root": str(project), "part": "STM32F407VGT6", "rtos": True}
+        )
+    assert cmd, "pio command expected"
+    build_root = adapter.pio_build_root({"project_root": str(project)})
+    ini = (build_root / "platformio.ini").read_text(encoding="utf-8")
+    assert "extra_scripts = pre:pio_freertos.py" in ini
+    script = build_root / "pio_freertos.py"
+    assert script.exists()
+    text = script.read_text(encoding="utf-8")
+    assert "BuildSources" in text
+    assert "CMSIS_RTOS" in text
+    assert "Third_Party" in text
+    # FPU flags: the ARM_CM4F port needs them (boards declare plain m4).
+    assert "-mfloat-abi=hard" in text
+
+
+@pytest.mark.enable_platformio
+def test_platformio_ini_bare_metal_has_no_extra_script(tmp_path: Path) -> None:
+    adapter = vendor_adapters.get_adapter("stm32")
+    assert adapter is not None
+    project = tmp_path / "proj"
+    (project / "Core" / "Src").mkdir(parents=True)
+    with patch("shutil.which", return_value="/fake/pio"):
+        adapter.build_via_platformio({"project_root": str(project), "part": "STM32F407VGT6"})
+    build_root = adapter.pio_build_root({"project_root": str(project)})
+    ini = (build_root / "platformio.ini").read_text(encoding="utf-8")
+    assert "extra_scripts" not in ini
+    assert not (build_root / "pio_freertos.py").exists()
+
+
+@pytest.mark.enable_platformio
+def test_platformio_ini_rtos_ignored_for_unsupported_family(tmp_path: Path) -> None:
+    """esp32/msp430: rtos flag in ctx must not fabricate a FreeRTOS script."""
+    adapter = vendor_adapters.get_adapter("esp32")
+    assert adapter is not None
+    project = tmp_path / "esp"
+    project.mkdir()
+    with patch("shutil.which", return_value="/fake/pio"):
+        adapter.build_via_platformio({"project_root": str(project), "rtos": True})
+    build_root = adapter.pio_build_root({"project_root": str(project)})
+    ini = (build_root / "platformio.ini").read_text(encoding="utf-8")
+    assert "extra_scripts" not in ini
+    assert not (build_root / "pio_freertos.py").exists()
+
+
+@pytest.mark.enable_platformio
+def test_platformio_user_ini_never_modified_for_freertos(tmp_path: Path) -> None:
+    """When the user already has a platformio.ini, the workflow must not
+    append FreeRTOS wiring to it (user owns that file)."""
+    adapter = vendor_adapters.get_adapter("stm32")
+    assert adapter is not None
+    project = tmp_path / "user-proj"
+    project.mkdir()
+    original_ini = "[env:custom]\nplatform = ststm32\n"
+    (project / "platformio.ini").write_text(original_ini, encoding="utf-8")
+    with patch("shutil.which", return_value="/fake/pio"):
+        adapter.build_via_platformio({"project_root": str(project), "part": "STM32F407VGT6", "rtos": True})
+    assert (project / "platformio.ini").read_text(encoding="utf-8") == original_ini
+    assert not (project / "pio_freertos.py").exists()
+
+
+@pytest.mark.enable_platformio
+def test_platformio_workflow_ini_refreshes_with_rtos_decision(tmp_path: Path) -> None:
+    """A workflow-generated ini (marker line) must track the RTOS decision
+    across optimize-loop iterations: bare-metal first, RTOS later upgrades
+    the ini + writes the script, and a downgrade removes the stale script.
+    This matters because the ASCII staging dir persists between builds."""
+    adapter = vendor_adapters.get_adapter("stm32")
+    assert adapter is not None
+    project = tmp_path / "iter"
+    (project / "Core" / "Src").mkdir(parents=True)
+    with patch("shutil.which", return_value="/fake/pio"):
+        adapter.build_via_platformio({"project_root": str(project), "part": "STM32F407VGT6"})
+        build_root = adapter.pio_build_root({"project_root": str(project)})
+        ini = (build_root / "platformio.ini").read_text(encoding="utf-8")
+        assert "extra_scripts" not in ini
+        assert not (build_root / "pio_freertos.py").exists()
+
+        # optimize-loop re-runs with RTOS on: marker ini is regenerated
+        adapter.build_via_platformio(
+            {"project_root": str(project), "part": "STM32F407VGT6", "rtos": True}
+        )
+        ini = (build_root / "platformio.ini").read_text(encoding="utf-8")
+        assert "extra_scripts = pre:pio_freertos.py" in ini
+        assert (build_root / "pio_freertos.py").exists()
+
+        # downgrade again: stale script must be removed
+        adapter.build_via_platformio({"project_root": str(project), "part": "STM32F407VGT6"})
+        ini = (build_root / "platformio.ini").read_text(encoding="utf-8")
+        assert "extra_scripts" not in ini
+        assert not (build_root / "pio_freertos.py").exists()
+
+
 # --- probe-rs flash integration ---
 
 def test_flash_via_probe_rs_returns_empty_when_tool_missing() -> None:

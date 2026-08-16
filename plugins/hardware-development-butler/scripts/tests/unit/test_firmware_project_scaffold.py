@@ -116,3 +116,84 @@ def test_ensure_compilable_requires_part() -> None:
     result = fps.ensure_compilable(project, part="", module="led_blink")
     assert result["status"] == "blocked-needs-input"
     assert "part" in result["error"]
+
+
+# --- RTOS (FreeRTOS / CMSIS-RTOS v1) scaffold support ---
+
+def test_render_main_c_rtos_creates_freertos_thread() -> None:
+    src = fps.render_main_c("led_blink", rtos=True)
+    assert '#include "cmsis_os.h"' in src
+    assert "osThreadDef" in src
+    assert "osThreadCreate" in src
+    # CMSIS-RTOS v1 kernel bring-up (v1 has no osKernelInitialize).
+    assert "osKernelStart" in src
+    assert "osKernelInitialize" not in src
+    # The app task runs as the RTOS thread, not called directly from main.
+    assert "app_led_blink_task(NULL);" not in src
+    # HAL_InitTick re-run at lowest priority so ISRs can use FromISR APIs.
+    assert "HAL_InitTick(" in src
+    # configCHECK_FOR_STACK_OVERFLOW 2 requires the app-level hook.
+    assert "vApplicationStackOverflowHook" in src
+
+
+def test_render_main_c_rtos_chains_systick_for_hal_and_rtos_tick() -> None:
+    """SysTick must serve both HAL tick and FreeRTOS tick: aliasing
+    SysTick_Handler in FreeRTOSConfig.h would silently drop HAL_GetTick."""
+    src = fps.render_main_c("led_blink", rtos=True)
+    assert "void SysTick_Handler(void)" in src
+    assert "HAL_IncTick();" in src
+    assert "xPortSysTickHandler();" in src
+
+
+def test_render_main_c_bare_metal_stays_bare() -> None:
+    src = fps.render_main_c("led_blink", rtos=False)
+    assert "cmsis_os" not in src
+    assert "osThreadCreate" not in src
+    assert "SysTick_Handler" not in src
+    assert "app_led_blink_task((void const *)NULL);" in src
+
+
+def test_render_freertos_config_h_has_required_macros() -> None:
+    cfg = fps.render_freertos_config_h()
+    normalized = " ".join(cfg.split())
+    for macro in (
+        "configUSE_PREEMPTION",
+        "configCPU_CLOCK_HZ",
+        "configTICK_RATE_HZ",
+        "configMAX_PRIORITIES",
+        "configMINIMAL_STACK_SIZE",
+        "configTOTAL_HEAP_SIZE",
+    ):
+        assert macro in cfg, f"missing {macro}"
+    # Port handler aliases (whitespace-normalized: the file aligns columns).
+    assert "#define vPortSVCHandler SVC_Handler" in normalized
+    assert "#define xPortPendSVHandler PendSV_Handler" in normalized
+    # SysTick is chained in the generated main.c, never aliased here.
+    assert "#define xPortSysTickHandler SysTick_Handler" not in normalized
+
+
+def test_ensure_compilable_rtos_writes_freertos_config() -> None:
+    project = copy_fixture("rtos")
+    result = fps.ensure_compilable(project, part="STM32F407VGTx", module="led_blink", rtos=True)
+    assert result["status"] == "ok"
+    cfg = project / "Core" / "Inc" / "FreeRTOSConfig.h"
+    assert cfg.exists()
+    assert "configUSE_PREEMPTION" in cfg.read_text(encoding="utf-8")
+    main_c = (project / "Core" / "Src" / "main.c").read_text(encoding="utf-8")
+    assert "osThreadCreate" in main_c
+    assert any("FreeRTOSConfig.h" in action for action in result["actions"])
+
+
+def test_ensure_compilable_bare_metal_does_not_write_freertos_config() -> None:
+    project = copy_fixture("rtos-bare")
+    fps.ensure_compilable(project, part="STM32F407VGTx", module="led_blink", rtos=False)
+    assert not (project / "Core" / "Inc" / "FreeRTOSConfig.h").exists()
+
+
+def test_ensure_compilable_preserves_existing_freertos_config() -> None:
+    project = copy_fixture("rtos-existing")
+    cfg = project / "Core" / "Inc" / "FreeRTOSConfig.h"
+    cfg.parent.mkdir(parents=True, exist_ok=True)
+    cfg.write_text("#ifndef FREERTOS_CONFIG_H\n#define FREERTOS_CONFIG_H\n#endif\n", encoding="utf-8")
+    fps.ensure_compilable(project, part="STM32F407VGTx", module="led_blink", rtos=True)
+    assert "FREERTOS_CONFIG_H" in cfg.read_text(encoding="utf-8")

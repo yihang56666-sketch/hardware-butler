@@ -848,18 +848,22 @@ def _stage_firmware_plan(
             error=plan.get("error", ""),
         )
 
-    # The PlatformIO stm32cube backend does not vendor CMSIS-RTOS/FreeRTOS,
-    # so codegen must be bare-metal there even when the .ioc enables RTOS.
-    # The plan above still records the RTOS intent and availability.
+    # PlatformIO backend: RTOS codegen stays on for families whose pio build
+    # can compile the framework-bundled FreeRTOS (stm32 ships a generated
+    # pio_freertos.py pre-script); other families (arduino/energia) downgrade
+    # to bare-metal. The plan still records the RTOS intent either way.
     adapter = _get_vendor_adapter(state)
     pio_available = bool(adapter and adapter.find_pio(root))
-    rtos_codegen = bool(plan.get("freertos", {}).get("enabled")) and not pio_available
+    pio_freertos = bool(adapter and adapter.supports_freertos_on_platformio())
+    rtos_codegen = bool(plan.get("freertos", {}).get("enabled")) and (
+        not pio_available or pio_freertos
+    )
     rtos_note = (
         ""
         if rtos_codegen == bool(plan.get("freertos", {}).get("enabled"))
         else (
-            "RTOS downgraded to bare-metal: PlatformIO build backend does not vendor "
-            "CMSIS-RTOS; .ioc RTOS intent is preserved in firmware_plan evidence"
+            "RTOS downgraded to bare-metal: this family's PlatformIO build backend "
+            "does not compile FreeRTOS; .ioc RTOS intent is preserved in firmware_plan evidence"
         )
     )
 
@@ -1110,12 +1114,18 @@ def _stage_build(
         selected_part = ""
         if chip_stage and chip_stage["status"] == "completed":
             selected_part = chip_stage.get("evidence", {}).get("selected_part", "")
+        fw_stage = next((s for s in state["stages"] if s["id"] == "firmware-plan"), None)
+        rtos_codegen = bool(
+            fw_stage
+            and fw_stage.get("evidence", {}).get("firmware_patch", {}).get("rtos_codegen")
+        )
         build_ctx = {
             "project_root": str(root),
             "part": selected_part or state.get("context", {}).get("part", ""),
             "target": state.get("context", {}).get("target", ""),
             "elf": "build/firmware.elf",
             "probe": state.get("context", {}).get("probe", ""),
+            "rtos": rtos_codegen,
         }
         # P3 Step F: prefer PlatformIO if available, fall back to adapter
         # native build_command.
