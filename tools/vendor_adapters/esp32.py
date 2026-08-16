@@ -92,5 +92,11 @@ class ESP32Adapter(VendorAdapter):
             return "esp01"
         return "esp32dev"
 
+    def _platformio_platform(self) -> str:
+        return "espressif32"
+
+    def _platformio_framework(self) -> str:
+        return "arduino"
+
 
 register_adapter(ESP32Adapter())

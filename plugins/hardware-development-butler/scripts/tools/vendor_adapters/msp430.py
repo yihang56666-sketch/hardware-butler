@@ -89,5 +89,11 @@ class MSP430Adapter(VendorAdapter):
             return "launchpadfr5969"
         return "launchpad"
 
+    def _platformio_platform(self) -> str:
+        return "timsp430"
+
+    def _platformio_framework(self) -> str:
+        return "energia"
+
 
 register_adapter(MSP430Adapter())

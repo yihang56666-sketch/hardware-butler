@@ -44,3 +44,6 @@ plugins/hardware-development-butler/scripts/tests/.tmp-plugin-smoke/
 plugins/hardware-development-butler/scripts/*tmp-plugin-smoke/
 plugins/hardware-development-butler/scripts/tests/tmp/
 .tmp-wf-tests/
+.venv/
+.platformio/
+platformio.ini

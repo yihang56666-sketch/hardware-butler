@@ -6,6 +6,8 @@ import sys
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 sys.path.insert(0, "tools")
 
 import vendor_adapters  # noqa: E402
@@ -15,29 +17,40 @@ import vendor_adapters.stm32  # noqa: E402
 
 # --- PlatformIO build integration ---
 
-def test_build_via_platformio_returns_empty_when_pio_missing() -> None:
+@pytest.mark.enable_platformio
+def test_build_via_platformio_returns_empty_when_pio_missing(tmp_path: Path) -> None:
     adapter = vendor_adapters.get_adapter("stm32")
     assert adapter is not None
     with patch("shutil.which", return_value=None):
-        cmd = adapter.build_via_platformio({"project_root": "/tmp/proj"})
+        with patch("pathlib.Path.exists", return_value=False):
+            cmd = adapter.build_via_platformio({"project_root": str(tmp_path / "proj")})
     assert cmd == []
 
 
-def test_build_via_platformio_returns_pio_run_when_available() -> None:
+@pytest.mark.enable_platformio
+def test_build_via_platformio_returns_pio_run_when_available(tmp_path: Path) -> None:
     adapter = vendor_adapters.get_adapter("stm32")
     assert adapter is not None
+    project = tmp_path / "proj"
+    project.mkdir()
     with patch("shutil.which", return_value="/fake/pio"):
-        cmd = adapter.build_via_platformio({"project_root": "/tmp/proj"})
-    assert cmd == ["pio", "run", "-d", "/tmp/proj"]
+        cmd = adapter.build_via_platformio({"project_root": str(project)})
+    assert cmd[0] == "/fake/pio"
+    assert "run" in cmd
+    # platformio.ini should have been auto-generated
+    assert (project / "platformio.ini").exists()
 
 
-def test_build_via_platformio_for_esp32() -> None:
+@pytest.mark.enable_platformio
+def test_build_via_platformio_for_esp32(tmp_path: Path) -> None:
     adapter = vendor_adapters.get_adapter("esp32")
     assert adapter is not None
+    project = tmp_path / "esp"
+    project.mkdir()
     with patch("shutil.which", return_value="/fake/pio"):
-        cmd = adapter.build_via_platformio({"project_root": "/tmp/esp"})
-    assert cmd[0] == "pio"
-    assert "esp" in cmd[3]
+        cmd = adapter.build_via_platformio({"project_root": str(project)})
+    assert cmd[0] == "/fake/pio"
+    assert (project / "platformio.ini").exists()
 
 
 # --- probe-rs flash integration ---
@@ -167,6 +180,7 @@ def _make_state(family: str = "stm32", part: str = "STM32F407VGT6") -> dict:
     }
 
 
+@pytest.mark.enable_platformio
 def test_stage_build_prefers_platformio_when_available(tmp_path: Path) -> None:
     """When pio is on PATH, _stage_build uses platformio backend, not native."""
     import workflow_runner as wr
@@ -180,9 +194,10 @@ def test_stage_build_prefers_platformio_when_available(tmp_path: Path) -> None:
     assert result.evidence["build_backend"] == "platformio"
     assert mock_run.called
     called_cmd = mock_run.call_args[0][0]
-    assert called_cmd[0] == "pio"
+    assert "pio" in called_cmd[0] or called_cmd[0].endswith("pio")
 
 
+@pytest.mark.enable_platformio
 def test_stage_build_falls_back_when_pio_missing(tmp_path: Path) -> None:
     """When pio is not on PATH, _stage_build falls back to adapter native."""
     import workflow_runner as wr

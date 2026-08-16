@@ -7,6 +7,8 @@ import sys
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 sys.path.insert(0, "tools")
 
 import workflow_runner as wr  # noqa: E402
@@ -26,6 +28,7 @@ def _copy_fixture(src: Path, dst: Path) -> Path:
     return dst
 
 
+@pytest.mark.enable_platformio
 def test_build_stage_returns_failed_when_pio_compile_fails(tmp_path: Path) -> None:
     """When pio is on PATH but build fails, stage returns failed (triggers optimize-loop)."""
     fixture = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "cubemx-basic"
@@ -64,6 +67,7 @@ def test_build_stage_returns_failed_when_pio_compile_fails(tmp_path: Path) -> No
     assert "HAL_GPIO_TogglePin" in result.evidence["build_log"]
 
 
+@pytest.mark.enable_platformio
 def test_build_stage_returns_completed_when_pio_compile_succeeds(tmp_path: Path) -> None:
     """When pio build succeeds, stage returns completed."""
     fixture = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "cubemx-basic"
@@ -99,6 +103,7 @@ def test_build_stage_returns_completed_when_pio_compile_succeeds(tmp_path: Path)
     assert result.evidence["build_executed"] is True
 
 
+@pytest.mark.enable_platformio
 def test_build_stage_stays_completed_when_no_pio_no_tools(tmp_path: Path) -> None:
     """When pio is not on PATH and no build tools, stage stays plan-only (completed)."""
     fixture = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "cubemx-basic"

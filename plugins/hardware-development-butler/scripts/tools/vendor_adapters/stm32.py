@@ -127,5 +127,11 @@ class STM32Adapter(VendorAdapter):
             return "nucleo_l476rg"
         return "nucleo_f401re"
 
+    def _platformio_platform(self) -> str:
+        return "ststm32"
+
+    def _platformio_framework(self) -> str:
+        return "arduino"
+
 
 register_adapter(STM32Adapter())
