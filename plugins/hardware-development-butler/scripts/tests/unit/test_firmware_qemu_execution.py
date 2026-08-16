@@ -173,3 +173,63 @@ def test_firmware_executes_under_qemu_and_writes_rtt_heartbeat(
             qemu.wait(timeout=10)
         except subprocess.TimeoutExpired:
             qemu.kill()
+
+
+@pytest.mark.enable_platformio
+@pytest.mark.skipif(
+    not os.environ.get("HARDWARE_BUTLER_QEMU"),
+    reason="set HARDWARE_BUTLER_QEMU=1 to run QEMU execution tests",
+)
+@pytest.mark.skipif(not _QEMU, reason="qemu-system-arm not found")
+@pytest.mark.skipif(not _GDB, reason="arm-none-eabi-gdb not found (PlatformIO toolchain)")
+@pytest.mark.skipif(not Path(_PIO).exists(), reason="PlatformIO not installed")
+def test_workflow_observe_uses_qemu_backend_end_to_end(cubemx_basic_fixture: Path) -> None:
+    """Full workflow wiring: build the firmware for real, then debug-observe
+    picks the QEMU backend (no probe attached) and verify-goal labels the
+    result behavior-emulated from the actually-executed heartbeat."""
+    import qemu_behavior_check as qbc
+
+    project = cubemx_basic_fixture.parent.parent / ".tmp-wf-tests" / "qemu-exec" / "project"
+    assert project.exists(), "run test_firmware_executes_under_qemu first (shares the build)"
+
+    ctx = wr.WorkflowContext(feature="led-blink", pin="PD12", function="gpio-output")
+    state = wr.init_workflow(project, intent="develop-feature", goal="LED blink", context=ctx)
+    for sid in ("requirement-parse", "chip-selection", "datasheet-collect", "cubemx-config", "firmware-plan", "build", "flash"):
+        stage = next(s for s in state["stages"] if s["id"] == sid)
+        stage["status"] = "completed"
+        stage["evidence"] = {"placeholder": True}
+    fw = next(s for s in state["stages"] if s["id"] == "firmware-plan")
+    fw["evidence"] = {"firmware_plan": {"status": "plan-only", "verification": ["LED on PD12 toggles"]}}
+    chip = next(s for s in state["stages"] if s["id"] == "chip-selection")
+    chip["evidence"] = {
+        "selected_part": "STM32F407VGT6",
+        "backends": {"vendor_adapter": {"family": "stm32"}, "backends": {}},
+    }
+
+    adapter = vendor_adapters.get_adapter("stm32")
+    assert adapter is not None
+    with patch.object(adapter, "find_pio", return_value=_PIO):
+        argv = adapter.build_via_platformio(
+            {"project_root": str(project), "part": "STM32F407VGT6", "rtos": True}
+        )
+    assert argv
+    build = subprocess.run(
+        [str(tok) for tok in argv], shell=False, capture_output=True, text=True, timeout=420
+    )
+    assert build.returncode == 0, build.stderr[-2000:]
+    elfs = list((Path(argv[-1]) / ".pio" / "build").rglob("firmware.elf"))
+    assert elfs
+    state["context"]["elf"] = str(elfs[0])
+
+    observe = wr._stage_debug_observe(project, ctx, state)
+    assert observe.status == "completed"
+    assert observe.evidence["mode"] == "qemu-emulated", observe.evidence["observe_errors"]
+    assert observe.evidence["emulated_execution"]["task_symbol"] == "app_led_blink_task"
+    observe_stage = next(s for s in state["stages"] if s["id"] == "debug-observe")
+    observe_stage["status"] = "completed"
+    observe_stage["evidence"] = observe.evidence
+
+    verify = wr._stage_verify_goal(project, ctx, state)
+    assert verify.status == "completed"
+    assert verify.evidence["verification_level"] == "behavior-emulated"
+    assert qbc.available()

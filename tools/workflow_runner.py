@@ -1654,6 +1654,33 @@ def _stage_debug_observe(
 
     observations = []
     sim_capture = ""
+    emul_evidence: dict[str, Any] = {}
+    if observe_mode == "sim":
+        # Emulation backend: when no probe is attached but QEMU + gdb exist,
+        # EXECUTE the built firmware and read the RTT heartbeat — real
+        # execution of the real binary (honestly labeled "emulated", one
+        # level below physical-probe capture). Requires the build stage to
+        # have produced an ELF (state.context.elf).
+        elf = str(state.get("context", {}).get("elf", "") or "")
+        if elf and Path(elf).exists():
+            try:
+                import qemu_behavior_check
+                if qemu_behavior_check.available():
+                    check = qemu_behavior_check.run_behavior_check(elf)
+                    if check.get("status") == "ok":
+                        observe_mode = "qemu-emulated"
+                        real_capture = str(check.get("capture", ""))
+                        emul_evidence = {
+                            "backend": "qemu",
+                            "machine": check.get("machine", ""),
+                            "task_symbol": check.get("task_symbol", ""),
+                            "wr_off": check.get("wr_off"),
+                            "heartbeat": check.get("heartbeat", ""),
+                        }
+                    else:
+                        observe_errors.append({"backend": "qemu", "reason": str(check.get("reason", "check failed"))})
+            except Exception as exc:  # noqa: BLE001 — emulation is best-effort
+                observe_errors.append({"backend": "qemu", "reason": f"emulation backend failed: {exc}"})
     if observe_mode == "sim":
         # P3: synthesize a fake capture that matches all expected signals
         # to prove _verify_signal can correctly verify them. Real capture
@@ -1691,7 +1718,8 @@ def _stage_debug_observe(
             "mode": observe_mode,
             "signals": signals,
             "observations": observations,
-            "hardware_observed": observe_mode != "sim",
+            "hardware_observed": observe_mode not in ("sim", "qemu-emulated"),
+            "emulated_execution": emul_evidence if emul_evidence else None,
             "capture": real_capture[:2000] if real_capture else "",
             "observe_errors": observe_errors,
             "note": f"{observe_mode} mode observation",
@@ -1795,6 +1823,8 @@ def _stage_verify_goal(
 
     if observe_mode == "sim":
         verification_level = "behavior-mock"
+    elif observe_mode == "qemu-emulated":
+        verification_level = "behavior-emulated"
     elif goal_keywords:
         verification_level = "behavior-keyword"
     elif signals:
