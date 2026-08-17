@@ -32,12 +32,15 @@ import vendor_adapters
 import vendor_adapters.avr
 import vendor_adapters.c2000
 import vendor_adapters.esp32
+import vendor_adapters.imxrt
 import vendor_adapters.lpc
+import vendor_adapters.max32
 import vendor_adapters.msp430
 import vendor_adapters.nordic
 import vendor_adapters.pic32
 import vendor_adapters.ra
 import vendor_adapters.riscv
+import vendor_adapters.rx
 import vendor_adapters.stm32
 import vendor_adapters.tiva
 from safety_gate import check_goal_token, mint_goal_token
@@ -1543,6 +1546,7 @@ def _verify_signal(expected: dict[str, Any], observed_capture: str) -> dict[str,
     """Check whether observed_capture contains evidence of the expected signal.
 
     P3: replaces keyword-only matching with structured verification:
+    - If expected_regex is set, run a compiled-regex search against capture
     - If expected_text is set, look for that exact substring in capture
     - If frequency_hz is set, look for markers like "toggle", "blink", "2Hz"
     - If only kind is set, fall back to kind-keyword match (led/uart/rtt/swo)
@@ -1555,8 +1559,48 @@ def _verify_signal(expected: dict[str, Any], observed_capture: str) -> dict[str,
 
     capture_lower = observed_capture.lower()
     kind = str(expected.get("kind", "")).lower()
+    expected_regex = expected.get("expected_regex")
     expected_text = expected.get("expected_text")
     freq_hz = expected.get("frequency_hz")
+
+    # Path 0: expected_regex — structured pattern match. This is the deepest
+    # behavioral verification path: the signal spec carries a regex that
+    # captures a structured value (e.g. r"vbus_mv=(\d+)" for ADC readings),
+    # so the verify layer can assert BOTH that the firmware emitted the line
+    # AND that the value is in the expected range. Returns the matched group
+    # in evidence_snippet so the audit trail shows the actual value seen.
+    if expected_regex:
+        import re
+        try:
+            pattern = re.compile(expected_regex, re.IGNORECASE | re.MULTILINE)
+        except (re.error, TypeError) as exc:
+            return {
+                "matched": False,
+                "reason": f"invalid expected_regex: {exc}",
+                "evidence_snippet": observed_capture[:200],
+            }
+        match = pattern.search(observed_capture)
+        if match:
+            # Snippet: 30 chars before/after the match, plus the captured
+            # groups (if any) so the user can see the actual value.
+            start = max(0, match.start() - 30)
+            end = min(len(observed_capture), match.end() + 30)
+            snippet = observed_capture[start:end]
+            groups = [g for g in match.groups() if g is not None]
+            reason = f"expected_regex /{expected_regex}/ matched"
+            if groups:
+                reason += f" (groups: {groups})"
+            return {
+                "matched": True,
+                "reason": reason,
+                "evidence_snippet": snippet,
+                "regex_groups": groups,
+            }
+        return {
+            "matched": False,
+            "reason": f"expected_regex /{expected_regex}/ not found in capture",
+            "evidence_snippet": observed_capture[:200],
+        }
 
     # Path 1: exact expected text substring
     if expected_text:

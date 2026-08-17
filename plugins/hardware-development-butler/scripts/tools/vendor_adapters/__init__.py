@@ -330,8 +330,19 @@ def detect_family(part: str) -> str:
     # else; the short form is checked by 'RA4'/'RA6' markers.
     if p.startswith("R7FA") or p.startswith(("RA4", "RA6")):
         return "ra"
+    # Renesas RX: RX65N/RX72N/RX130/RX231 — all start with 'RX' followed by
+    # a digit. Must be checked AFTER the RA family.
+    if p.startswith("RX") and len(p) > 2 and p[2].isdigit():
+        return "rx"
     if p.startswith("LPC"):
         return "lpc"
     if p.startswith(("PIC32MX", "PIC32MZ", "PIC32WK")):
         return "pic32"
+    # NXP i.MX RT crossover (Cortex-M7). Part prefix is 'MIMXRT' (orderable
+    # part number) or short form 'RT10xx'/'RT11xx'.
+    if p.startswith("MIMXRT") or p.startswith(("RT101", "RT102", "RT105", "RT106", "RT116", "RT117")):
+        return "imxrt"
+    # Maxim MAX32 family: MAX32660/MAX32666/MAX32670/MAX32690.
+    if p.startswith("MAX326"):
+        return "max32"
     return ""

@@ -30,12 +30,15 @@ if str(TOOLS_DIR) not in sys.path:
 import vendor_adapters  # noqa: E402
 import vendor_adapters.c2000  # noqa: E402,F401 — registers the c2000 adapter
 import vendor_adapters.esp32  # noqa: E402,F401 — registers the esp32 adapter
+import vendor_adapters.imxrt  # noqa: E402,F401 — registers the imxrt adapter
 import vendor_adapters.lpc  # noqa: E402,F401 — registers the lpc adapter
+import vendor_adapters.max32  # noqa: E402,F401 — registers the max32 adapter
 import vendor_adapters.msp430  # noqa: E402,F401 — registers the msp430 adapter
 import vendor_adapters.nordic  # noqa: E402,F401 — registers the nordic adapter
 import vendor_adapters.pic32  # noqa: E402,F401 — registers the pic32 adapter
 import vendor_adapters.ra  # noqa: E402,F401 — registers the ra adapter
 import vendor_adapters.riscv  # noqa: E402,F401 — registers the riscv adapter
+import vendor_adapters.rx  # noqa: E402,F401 — registers the rx adapter
 import vendor_adapters.stm32  # noqa: E402,F401 — registers the stm32 adapter
 import vendor_adapters.tiva  # noqa: E402,F401 — registers the ti-tiva adapter
 

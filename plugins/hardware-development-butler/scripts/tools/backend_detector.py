@@ -26,12 +26,15 @@ import vendor_adapters
 import vendor_adapters.avr
 import vendor_adapters.c2000
 import vendor_adapters.esp32
+import vendor_adapters.imxrt
 import vendor_adapters.lpc
+import vendor_adapters.max32
 import vendor_adapters.msp430
 import vendor_adapters.nordic
 import vendor_adapters.pic32
 import vendor_adapters.ra
 import vendor_adapters.riscv
+import vendor_adapters.rx
 import vendor_adapters.stm32
 import vendor_adapters.tiva
 

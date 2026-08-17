@@ -224,3 +224,93 @@ def test_verify_signal_extended_kinds_no_match_on_empty_capture() -> None:
     for kind in ("i2c", "spi", "adc", "pwm", "can"):
         result = wr._verify_signal({"kind": kind}, "system idle no traffic")
         assert result["matched"] is False, kind
+
+
+# --- regex-pattern signal verification (Phase 13) ---
+
+
+def test_verify_signal_regex_matches_with_capture_groups() -> None:
+    """expected_regex with capture groups returns the matched groups in
+    evidence — the deepest behavioral verification path."""
+    capture = "vbus_mv=3310 temp_c=25.5\nvbus_mv=3320 temp_c=25.6"
+    result = wr._verify_signal({"kind": "adc", "expected_regex": r"vbus_mv=(\d+)"}, capture)
+    assert result["matched"] is True
+    assert "vbus_mv=3310" in result["evidence_snippet"]
+    assert result["regex_groups"] == ["3310"]
+
+
+def test_verify_signal_regex_matches_without_groups() -> None:
+    """A regex without capture groups still matches the substring."""
+    capture = "heartbeat tick=1\ntick=2"
+    result = wr._verify_signal({"kind": "rtt", "expected_regex": r"heartbeat"}, capture)
+    assert result["matched"] is True
+    assert "heartbeat" in result["evidence_snippet"]
+    assert result["regex_groups"] == []
+
+
+def test_verify_signal_regex_no_match_returns_false() -> None:
+    capture = "system idle, no sensor data"
+    result = wr._verify_signal({"kind": "adc", "expected_regex": r"vbus_mv=(\d+)"}, capture)
+    assert result["matched"] is False
+    assert "vbus_mv" in result["reason"]
+
+
+def test_verify_signal_invalid_regex_returns_false() -> None:
+    """An invalid regex must NOT raise — it returns matched=False with a
+    descriptive reason so the optimize-loop can flag the bad spec."""
+    result = wr._verify_signal({"kind": "adc", "expected_regex": r"(unclosed"}, "capture")
+    assert result["matched"] is False
+    assert "invalid expected_regex" in result["reason"]
+
+
+def test_verify_signal_regex_takes_precedence_over_expected_text() -> None:
+    """When both expected_regex and expected_text are set, the regex path
+    runs first — it is the more rigorous verification."""
+    capture = "value=42"
+    result = wr._verify_signal(
+        {"kind": "uart", "expected_regex": r"value=(\d+)", "expected_text": "value=42"},
+        capture,
+    )
+    assert result["matched"] is True
+    assert "expected_regex" in result["reason"]
+    assert result["regex_groups"] == ["42"]
+
+
+def test_verify_signal_regex_supports_adc_value_range_extraction() -> None:
+    """Real-world case: an ADC feature reports millivolts on each cycle.
+    The regex path captures the value so the user can verify it's in range."""
+    capture = """
+[10:00:01] adc1: channel=3 raw=2048 mv=1650
+[10:00:02] adc1: channel=3 raw=2052 mv=1654
+"""
+    result = wr._verify_signal(
+        {"kind": "adc", "expected_regex": r"mv=(\d+)"},
+        capture,
+    )
+    assert result["matched"] is True
+    assert result["regex_groups"] == ["1650"]
+
+
+def test_verify_signal_regex_case_insensitive_match() -> None:
+    """Regex compiles with IGNORECASE so LED-state captures are robust to
+    firmware that prints 'LED' vs 'led'. The captured group preserves the
+    original case (re.IGNORECASE affects matching, not capture content)."""
+    capture = "LED ON\nled off\nLed on"
+    result = wr._verify_signal({"kind": "led", "expected_regex": r"led (on|off)"}, capture)
+    assert result["matched"] is True
+    assert result["regex_groups"] == ["ON"]  # first match preserves case
+
+
+def test_verify_signal_regex_multiline_search() -> None:
+    """Regex compiles with MULTILINE so ^ anchors work per-line in multi-line
+    captures (common for RTT output)."""
+    capture = "boot\nready\nready\nready"
+    result = wr._verify_signal({"kind": "rtt", "expected_regex": r"^ready$"}, capture)
+    assert result["matched"] is True
+
+
+def test_verify_signal_regex_empty_when_no_capture() -> None:
+    """An empty capture must NOT match any regex — fail-closed."""
+    result = wr._verify_signal({"kind": "adc", "expected_regex": r"vbus=(\d+)"}, "")
+    assert result["matched"] is False
+    assert "empty observation capture" in result["reason"]
