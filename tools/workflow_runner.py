@@ -1590,11 +1590,46 @@ def _verify_signal(expected: dict[str, Any], observed_capture: str) -> dict[str,
             reason = f"expected_regex /{expected_regex}/ matched"
             if groups:
                 reason += f" (groups: {groups})"
+
+            # Value-range bounds: if expected_min and/or expected_max are
+            # set, the first captured group is parsed as float and checked
+            # against the bounds. Enables assertions like ADC reading in
+            # [1500, 2000] mV -- the optimize-loop can act on range
+            # violations even when the regex shape matches. Bounds apply
+            # to the FIRST captured group only.
+            expected_min = expected.get("expected_min")
+            expected_max = expected.get("expected_max")
+            value: float | None = None
+            if (expected_min is not None or expected_max is not None) and groups:
+                try:
+                    value = float(groups[0])
+                except ValueError:
+                    return {
+                        "matched": False,
+                        "reason": f"expected_min/max set but captured group {groups[0]!r} is not numeric",
+                        "evidence_snippet": snippet,
+                        "regex_groups": groups,
+                    }
+                violations = []
+                if expected_min is not None and value < float(expected_min):
+                    violations.append(f"value {value} < expected_min {expected_min}")
+                if expected_max is not None and value > float(expected_max):
+                    violations.append(f"value {value} > expected_max {expected_max}")
+                if violations:
+                    return {
+                        "matched": False,
+                        "reason": "regex matched but value out of range: " + "; ".join(violations),
+                        "evidence_snippet": snippet,
+                        "regex_groups": groups,
+                        "captured_value": value,
+                    }
+                reason += f" (value {value} in [{expected_min}, {expected_max}])"
             return {
                 "matched": True,
                 "reason": reason,
                 "evidence_snippet": snippet,
                 "regex_groups": groups,
+                "captured_value": value,
             }
         return {
             "matched": False,

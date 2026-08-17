@@ -314,3 +314,155 @@ def test_verify_signal_regex_empty_when_no_capture() -> None:
     result = wr._verify_signal({"kind": "adc", "expected_regex": r"vbus=(\d+)"}, "")
     assert result["matched"] is False
     assert "empty observation capture" in result["reason"]
+
+
+# --- value-range bounds on regex-captured groups (Phase 14) ---
+
+
+def test_verify_signal_regex_value_in_range_matches() -> None:
+    """When expected_min and expected_max are set, the first captured group
+    must be parsed and checked against the bounds. In-range values match."""
+    capture = "vbus_mv=1800"
+    result = wr._verify_signal(
+        {
+            "kind": "adc",
+            "expected_regex": r"vbus_mv=(\d+)",
+            "expected_min": 1500,
+            "expected_max": 2000,
+        },
+        capture,
+    )
+    assert result["matched"] is True
+    assert result["regex_groups"] == ["1800"]
+    assert result["captured_value"] == 1800.0
+
+
+def test_verify_signal_regex_value_below_min_returns_false() -> None:
+    """A value below expected_min must return matched=False with a
+    descriptive reason the optimize-loop can act on."""
+    capture = "vbus_mv=1200"
+    result = wr._verify_signal(
+        {
+            "kind": "adc",
+            "expected_regex": r"vbus_mv=(\d+)",
+            "expected_min": 1500,
+            "expected_max": 2000,
+        },
+        capture,
+    )
+    assert result["matched"] is False
+    assert "out of range" in result["reason"]
+    assert "1200" in result["reason"]
+    assert "expected_min 1500" in result["reason"]
+    assert result["captured_value"] == 1200.0
+
+
+def test_verify_signal_regex_value_above_max_returns_false() -> None:
+    capture = "vbus_mv=2500"
+    result = wr._verify_signal(
+        {
+            "kind": "adc",
+            "expected_regex": r"vbus_mv=(\d+)",
+            "expected_min": 1500,
+            "expected_max": 2000,
+        },
+        capture,
+    )
+    assert result["matched"] is False
+    assert "2500" in result["reason"]
+    assert "expected_max 2000" in result["reason"]
+
+
+def test_verify_signal_regex_value_only_min_set_matches_at_min() -> None:
+    """If only expected_min is set, the upper bound is unchecked."""
+    capture = "temp_c=25.5"
+    result = wr._verify_signal(
+        {
+            "kind": "adc",
+            "expected_regex": r"temp_c=([\d.]+)",
+            "expected_min": 0,
+        },
+        capture,
+    )
+    assert result["matched"] is True
+    assert result["captured_value"] == 25.5
+
+
+def test_verify_signal_regex_value_only_max_set_matches_at_max() -> None:
+    """If only expected_max is set, the lower bound is unchecked."""
+    capture = "duty=50"
+    result = wr._verify_signal(
+        {
+            "kind": "pwm",
+            "expected_regex": r"duty=(\d+)",
+            "expected_max": 100,
+        },
+        capture,
+    )
+    assert result["matched"] is True
+    assert result["captured_value"] == 50.0
+
+
+def test_verify_signal_regex_value_non_numeric_returns_false() -> None:
+    """If bounds are set but the captured group isn't numeric, the
+    verification fails-closed with a descriptive reason."""
+    capture = "vbus_mv=unknown"
+    result = wr._verify_signal(
+        {
+            "kind": "adc",
+            "expected_regex": r"vbus_mv=(\w+)",
+            "expected_min": 1500,
+            "expected_max": 2000,
+        },
+        capture,
+    )
+    assert result["matched"] is False
+    assert "not numeric" in result["reason"]
+    assert "unknown" in result["reason"]
+
+
+def test_verify_signal_regex_value_range_with_float_capture() -> None:
+    """Float captures (temperature with decimal) work the same as ints."""
+    capture = "temp_c=85.5"
+    result = wr._verify_signal(
+        {
+            "kind": "adc",
+            "expected_regex": r"temp_c=([\d.]+)",
+            "expected_min": 0,
+            "expected_max": 100,
+        },
+        capture,
+    )
+    assert result["matched"] is True
+    assert result["captured_value"] == 85.5
+
+
+def test_verify_signal_regex_value_range_negative_values() -> None:
+    """Negative temperatures must work — value_range check uses float parse."""
+    capture = "temp_c=-15.5"
+    result = wr._verify_signal(
+        {
+            "kind": "adc",
+            "expected_regex": r"temp_c=(-?[\d.]+)",
+            "expected_min": -40,
+            "expected_max": 85,
+        },
+        capture,
+    )
+    assert result["matched"] is True
+    assert result["captured_value"] == -15.5
+
+
+def test_verify_signal_regex_value_range_no_bounds_skips_check() -> None:
+    """If neither expected_min nor expected_max is set, the value-range
+    check is skipped entirely — pure regex match. captured_value is None."""
+    capture = "vbus_mv=99999"
+    result = wr._verify_signal(
+        {
+            "kind": "adc",
+            "expected_regex": r"vbus_mv=(\d+)",
+        },
+        capture,
+    )
+    assert result["matched"] is True
+    assert result["captured_value"] is None
