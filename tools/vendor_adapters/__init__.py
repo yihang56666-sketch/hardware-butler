@@ -299,7 +299,8 @@ def detect_family(part: str) -> str:
 
     STM32xx → stm32, ESP32-xx → esp32, MSP430-xx → msp430, LM4F/TM4C → ti-tiva,
     TMS320 → c2000, ATmega/ATtiny → avr, CH32V/GD32V → riscv (RISC-V core),
-    GD32/CH32 (non-V) → stm32-compatible (Cortex-M). Conservative: unknown → "".
+    GD32/CH32 (non-V) → stm32-compatible (Cortex-M), R7FA / RA4 / RA6 → ra,
+    LPCxx → lpc, PIC32MX/MZ → pic32. Conservative: unknown → "".
     """
     p = part.upper()
     if p.startswith("STM32"):
@@ -324,4 +325,13 @@ def detect_family(part: str) -> str:
         return "stm32"
     if p.startswith("NRF5"):
         return "nordic"
+    # Renesas RA: orderable parts use R7FA prefix (R7FA6M5BH...) or simpler
+    # RA4M1/RA6M3 short form. The 'R7' prefix avoids collision with anything
+    # else; the short form is checked by 'RA4'/'RA6' markers.
+    if p.startswith("R7FA") or p.startswith(("RA4", "RA6")):
+        return "ra"
+    if p.startswith("LPC"):
+        return "lpc"
+    if p.startswith(("PIC32MX", "PIC32MZ", "PIC32WK")):
+        return "pic32"
     return ""
