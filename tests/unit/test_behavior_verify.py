@@ -142,3 +142,85 @@ def test_sim_capture_from_signals_includes_expected_text() -> None:
     assert "PD12" in capture
     assert "2Hz" in capture
     assert "rtt" in capture
+
+
+# --- extended signal-kind coverage (i2c/spi/adc/pwm/can) ---
+
+
+def test_verify_signal_i2c_kind_matches_ack_keyword() -> None:
+    """i2c traffic prints 'ack'/'nack'/'wrote <addr>' patterns. The fallback
+    keyword path must recognize these so the optimize-loop can succeed on
+    i2c-based features without a frequency or expected_text override."""
+    capture = "i2c1: wrote 0x42, ack received"
+    result = wr._verify_signal({"kind": "i2c"}, capture)
+    assert result["matched"] is True
+    assert "i2c" in result["reason"] or "ack" in result["reason"]
+
+
+def test_verify_signal_i2c_kind_matches_nack_keyword() -> None:
+    capture = "i2c1: nack from 0x42"
+    result = wr._verify_signal({"kind": "i2c"}, capture)
+    assert result["matched"] is True
+
+
+def test_verify_signal_i2c_kind_no_match_when_capture_lacks_keywords() -> None:
+    capture = "system idle, nothing to report"
+    result = wr._verify_signal({"kind": "i2c"}, capture)
+    assert result["matched"] is False
+    assert "i2c" in result["reason"]
+
+
+def test_verify_signal_spi_kind_matches_xfer_keyword() -> None:
+    capture = "spi1: xfer 0xFF -> 0x00 (cs=low)"
+    result = wr._verify_signal({"kind": "spi"}, capture)
+    assert result["matched"] is True
+
+
+def test_verify_signal_spi_kind_matches_mosi_miso() -> None:
+    capture = "spi: mosi=0xAA miso=0x55"
+    result = wr._verify_signal({"kind": "spi"}, capture)
+    assert result["matched"] is True
+
+
+def test_verify_signal_adc_kind_matches_sample_keyword() -> None:
+    capture = "adc1 ch3: sample=2048 raw=2048 mv=1650"
+    result = wr._verify_signal({"kind": "adc"}, capture)
+    assert result["matched"] is True
+
+
+def test_verify_signal_adc_kind_matches_mv_keyword() -> None:
+    capture = "vin: 3300 mv"
+    result = wr._verify_signal({"kind": "adc"}, capture)
+    assert result["matched"] is True
+
+
+def test_verify_signal_pwm_kind_matches_duty_keyword() -> None:
+    capture = "pwm ch1: duty=50% freq=1000hz"
+    result = wr._verify_signal({"kind": "pwm"}, capture)
+    assert result["matched"] is True
+
+
+def test_verify_signal_pwm_kind_matches_channel_keyword() -> None:
+    capture = "pwm channel 2 enabled"
+    result = wr._verify_signal({"kind": "pwm"}, capture)
+    assert result["matched"] is True
+
+
+def test_verify_signal_can_kind_matches_frame_keyword() -> None:
+    capture = "can1: frame id=0x123 ext=0 dl=8"
+    result = wr._verify_signal({"kind": "can"}, capture)
+    assert result["matched"] is True
+
+
+def test_verify_signal_can_kind_matches_id_keyword() -> None:
+    capture = "rx can id=0x456 std"
+    result = wr._verify_signal({"kind": "can"}, capture)
+    assert result["matched"] is True
+
+
+def test_verify_signal_extended_kinds_no_match_on_empty_capture() -> None:
+    """All extended kinds must fail-closed on an empty capture rather than
+    spuriously matching."""
+    for kind in ("i2c", "spi", "adc", "pwm", "can"):
+        result = wr._verify_signal({"kind": kind}, "system idle no traffic")
+        assert result["matched"] is False, kind

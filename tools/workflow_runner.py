@@ -1626,6 +1626,11 @@ def _verify_signal(expected: dict[str, Any], observed_capture: str) -> dict[str,
         "uart": ("uart", "hello", "tx", "rx"),
         "rtt": ("rtt", "tick", "hello"),
         "swo": ("swo", "itm"),
+        "i2c": ("i2c", "ack", "nack", "wrote", "read", "addr"),
+        "spi": ("spi", "miso", "mosi", "cs", "xfer", "transfer"),
+        "adc": ("adc", "sample", "value", "mv", "raw"),
+        "pwm": ("pwm", "duty", "frequency", "channel"),
+        "can": ("can", "frame", "ext id", "std id", "can id"),
     }
     keywords = kind_keywords.get(kind, ())
     if not keywords:
