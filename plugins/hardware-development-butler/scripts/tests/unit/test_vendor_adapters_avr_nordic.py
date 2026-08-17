@@ -116,3 +116,151 @@ def test_nordic_datasheet_queries_use_product_spec_term() -> None:
     assert adapter is not None
     queries = adapter.datasheet_queries("nRF52832")
     assert any("product specification" in q for q in queries)
+
+
+# --- build_command paths ---
+
+
+def test_avr_build_command_uses_make_when_present() -> None:
+    from unittest.mock import patch
+
+    adapter = vendor_adapters.get_adapter("avr")
+    assert adapter is not None
+    with patch("vendor_adapters.avr.shutil.which", return_value="/usr/bin/make"):
+        cmd = adapter.build_command({"project_root": "/proj"})
+    assert cmd == ["make", "-C", "/proj"]
+
+
+def test_avr_build_command_falls_back_to_gcc_version_when_no_make() -> None:
+    from unittest.mock import patch
+
+    adapter = vendor_adapters.get_adapter("avr")
+    assert adapter is not None
+    with patch("vendor_adapters.avr.shutil.which", return_value=""):
+        cmd = adapter.build_command({"project_root": "/proj"})
+    assert cmd == ["avr-gcc", "--version"]
+
+
+def test_nordic_build_command_prefers_cmake_ninja() -> None:
+    from unittest.mock import patch
+
+    def which(name: str) -> str:
+        return {"/usr/bin/cmake": "", "cmake": "/usr/bin/cmake", "ninja": "/usr/bin/ninja"}.get(name, "")
+
+    adapter = vendor_adapters.get_adapter("nordic")
+    assert adapter is not None
+    with patch("vendor_adapters.nordic.shutil.which", side_effect=lambda n: "/usr/bin/" + n if n in ("cmake", "ninja") else ""):
+        cmd = adapter.build_command({"project_root": "/proj"})
+    assert cmd == ["cmake", "--build", "/proj"]
+
+
+def test_nordic_build_command_falls_back_to_gcc_version() -> None:
+    from unittest.mock import patch
+
+    adapter = vendor_adapters.get_adapter("nordic")
+    assert adapter is not None
+    with patch("vendor_adapters.nordic.shutil.which", return_value=""):
+        cmd = adapter.build_command({"project_root": "/proj"})
+    assert cmd == ["arm-none-eabi-gcc", "--version"]
+
+
+# --- observe_command paths ---
+
+
+def test_avr_observe_command_requires_port() -> None:
+    adapter = vendor_adapters.get_adapter("avr")
+    assert adapter is not None
+    assert adapter.observe_command({}) == []
+    cmd = adapter.observe_command({"port": "/dev/ttyUSB0", "baud": "115200"})
+    assert cmd[0] == "python"
+    assert "/dev/ttyUSB0" in cmd
+    assert "115200" in cmd
+
+
+def test_nordic_observe_command_prefers_probe_rs_rtt() -> None:
+    from unittest.mock import patch
+
+    adapter = vendor_adapters.get_adapter("nordic")
+    assert adapter is not None
+    with patch("vendor_adapters.nordic.shutil.which", return_value="/usr/bin/probe-rs"):
+        cmd = adapter.observe_command({"target": "nRF52832_xxAA"})
+    assert cmd[0] == "probe-rs"
+    assert "rtt" in cmd and "attach" in cmd
+    assert "--chip" in cmd and "nRF52832_xxAA" in cmd
+
+
+def test_nordic_observe_command_falls_back_to_uart() -> None:
+    from unittest.mock import patch
+
+    adapter = vendor_adapters.get_adapter("nordic")
+    assert adapter is not None
+    with patch("vendor_adapters.nordic.shutil.which", return_value=""):
+        cmd = adapter.observe_command({"port": "/dev/ttyACM0"})
+    assert cmd[0] == "python"
+    assert "/dev/ttyACM0" in cmd
+
+
+def test_nordic_observe_command_empty_without_probe_or_port() -> None:
+    from unittest.mock import patch
+
+    adapter = vendor_adapters.get_adapter("nordic")
+    assert adapter is not None
+    with patch("vendor_adapters.nordic.shutil.which", return_value=""):
+        assert adapter.observe_command({}) == []
+
+
+# --- programmer override + canonical chip ---
+
+
+def test_avr_programmer_respects_env_override(monkeypatch) -> None:
+    monkeypatch.setenv("HARDWARE_BUTLER_AVR_PROGRAMMER", "avrispmkii")
+    adapter = vendor_adapters.get_adapter("avr")
+    assert adapter is not None
+    cmd = adapter.flash_command({"elf": "fw.hex", "target": "ATmega328P"})
+    assert "avrispmkii" in cmd
+
+
+def test_avr_programmer_default_is_usbasp(monkeypatch) -> None:
+    monkeypatch.delenv("HARDWARE_BUTLER_AVR_PROGRAMMER", raising=False)
+    adapter = vendor_adapters.get_adapter("avr")
+    assert adapter is not None
+    cmd = adapter.flash_command({"elf": "fw.hex", "target": "ATmega328P"})
+    assert "usbasp" in cmd
+
+
+def test_avr_flash_command_uses_part_when_no_target() -> None:
+    """The adapter accepts either `target` or `part` as the chip identifier."""
+    adapter = vendor_adapters.get_adapter("avr")
+    assert adapter is not None
+    cmd = adapter.flash_command({"elf": "fw.hex", "part": "ATtiny85"})
+    assert "attiny85" in cmd  # lowercase normalized
+
+
+def test_nordic_canonical_chip_passes_through_nrf_part_numbers() -> None:
+    """Nordic parts (nRF52832 etc.) don't end in a package digit, so the
+    canonicalizer must NOT strip trailing characters."""
+    adapter = vendor_adapters.get_adapter("nordic")
+    assert adapter is not None
+    assert adapter.canonical_chip("nRF52832") == "nRF52832"
+    assert adapter.canonical_chip("nRF52840_xxAA") == "nRF52840_xxAA"
+
+
+# --- tool detection ---
+
+
+def test_avr_detect_tools_returns_all_expected_keys() -> None:
+    adapter = vendor_adapters.get_adapter("avr")
+    assert adapter is not None
+    tools = adapter.detect_tools()
+    for key in ("avr-gcc", "avrdude", "make", "avr-objcopy"):
+        assert key in tools
+        assert isinstance(tools[key], bool)
+
+
+def test_nordic_detect_tools_returns_all_expected_keys() -> None:
+    adapter = vendor_adapters.get_adapter("nordic")
+    assert adapter is not None
+    tools = adapter.detect_tools()
+    for key in ("arm-none-eabi-gcc", "probe-rs", "pyocd", "nrfjprog", "JLinkExe", "cmake", "ninja"):
+        assert key in tools
+        assert isinstance(tools[key], bool)

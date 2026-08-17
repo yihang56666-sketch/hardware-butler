@@ -158,6 +158,7 @@ python tools\hardware_butler.py bench-runbook --root <project-root> --action bui
 | [docs/INSTALL.md](docs/INSTALL.md) | 源码工作区、editable install 和 embeddedskills runtime 选择。 |
 | [docs/ARCHITECTURE_MAP.md](docs/ARCHITECTURE_MAP.md) | 一页理解入口、证据层、计划层、执行后端和安全网络。 |
 | [docs/HARDWARE_UNDERSTANDING.md](docs/HARDWARE_UNDERSTANDING.md) | 从本地证据、芯片资料、CubeMX、固件计划到台架动作的硬件理解闭环。 |
+| [docs/REAL_BOARD_DAY_RUNBOOK.md](docs/REAL_BOARD_DAY_RUNBOOK.md) | 真实板子接入日的完整操作清单（预检 → mock 干跑 → 接板 → bench-runbook → 值-合理性 → opt-in → 真烧录 → 失败处理）。 |
 | [docs/COMMANDS.md](docs/COMMANDS.md) | 按工作流分组的命令速查。 |
 | [docs/README.md](docs/README.md) | 文档目录和历史材料索引。 |
 | [CHANGELOG.md](CHANGELOG.md) | 版本变化和首发范围。 |

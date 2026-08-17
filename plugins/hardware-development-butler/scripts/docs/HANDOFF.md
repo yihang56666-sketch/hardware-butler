@@ -1177,3 +1177,115 @@ bring the result back via `--part`.
   19 new tests total this session).
 - ruff + mypy clean on tools/ (62 files now, was 60).
 - Plugin re-synced; `test_plugin_sync` passes.
+
+## 21. Takeover session: GUI consolidation + adapter coverage + real-board runbook (2026-08-17)
+
+The prior session (HANDOFF §16-20) shipped the autonomous LLM loop, QEMU
+observe backend, FreeRTOS codegen, AVR/Nordic adapters, and frequency
+measurement verification. This session picked up the user's takeover
+directive ("接手项目，修复优化整理") and verified state, then filled three
+remaining gaps without touching working code:
+
+### 21.1 GUI "工具" tab (Phase 6)
+
+`gui/hardware_agent_ui.py` gained a new tab between "动作" and "工作流".
+It surfaces 6 CLI subcommands that previously had no GUI entry:
+
+- `real-preflight` — real-board-day readiness check (chip + probe resolution)
+- `classify-log` — diagnose a build log file
+- `firmware-plan` / `firmware-patch` — feature/pin/function-driven plan + patch
+- `advise-pin` / `patch-ioc` — CubeMX pin/peripheral advice + .ioc patch
+- A "jump to research" button that switches to the existing "资料搜索" tab
+  (single source of truth for the research form state — the new tab does
+  NOT duplicate the research form, only dispatches).
+
+Real-hardware actions (`plan-action` / `execute-action`) are intentionally
+NOT exposed on the tools tab — they stay behind the Actions tab's
+confirmation-token flow. No new safety surface introduced.
+
+`tests/unit/test_gui_tools_tab.py` (NEW, 8 tests, skipped when PyQt6 is
+absent) covers:
+- tab-order stability (TAB_TOOLS=8, TAB_OUTPUT=12, etc. — load-bearing
+  integer indices that handlers dispatch into)
+- widget construction for all 7 input fields
+- handler wiring for all 7 handlers + the research-jump button
+- input validation guards: real-preflight refuses without a chip part;
+  classify-log refuses without a log path; firmware-plan / advise-pin
+  pass through optional fields correctly
+
+### 21.2 Plugin-sync pre-commit hook (Phase 6, dev workflow)
+
+`tools/install_plugin_sync_hook.py` (NEW) drops a small pre-commit hook
+into `.git/hooks/pre-commit`. The hook:
+
+- Detects when source files under `tools/`, `embeddedskills/`, or
+  `nextboard/` are staged (skips on docs-only commits)
+- Re-runs `package_hardware_butler_plugin.py`
+- Auto-stages the resulting plugin diff so the commit ships in sync
+- Fails open (warning + exit 0) if packaging fails — never blocks a commit
+  on a packaging-tool issue, but never lets drift ship silently either
+
+Idempotent: re-running reinstalls the hook. Safe to commit alongside the
+`.git/hooks/` directory (the hook file is repo-local, not committed; the
+installer is the committed artifact).
+
+### 21.3 AVR/Nordic adapter test coverage polish (Phase 7)
+
+`tests/unit/test_vendor_adapters_avr_nordic.py` extended from 13 to 26
+tests. New coverage:
+
+- `build_command` fallback chains (AVR: make→avr-gcc; Nordic:
+  cmake+ninja→arm-none-eabi-gcc)
+- `observe_command` paths (AVR requires port; Nordic prefers probe-rs RTT,
+  falls back to UART, returns [] when neither available)
+- `_pick_programmer` env-var override (`HARDWARE_BUTLER_AVR_PROGRAMMER`)
+- `canonical_chip` pass-through for Nordic (nRF part numbers don't end in
+  a package digit, so no stripping)
+- `flash_command` accepts either `target` or `part` as the chip identifier
+- `detect_tools` returns the documented key set for each family
+
+All 5 vendor families (STM32 / ESP32 / MSP430 / AVR / Nordic) now have
+uniform command-path test coverage.
+
+### 21.4 Real-board-day runbook (Phase 8)
+
+`docs/REAL_BOARD_DAY_RUNBOOK.md` (NEW) consolidates the board-day-only
+workflow into a single document:
+
+- Phase 0: prerequisites (probe + PlatformIO + CubeMX project)
+- Phase 1: `real-preflight` (read-only)
+- Phase 2: mock-mode end-to-end dry run
+- Phase 3: connect the board
+- Phase 4: `bench-runbook` generation (still no flash)
+- Phase 5: value-sanity gate (automated)
+- Phase 6: opt into real flash (`HARDWARE_BUTLER_ENABLE_REAL_FLASH=1`)
+- Phase 7: run the real workflow
+- Phase 8: failure-mode triage
+- Phase 9: post-run audit + cleanup
+- Safety contract: default mock, real = env-var + token + value-sanity,
+  never bypass
+
+This document does not replace §16 (which is the technical reference for
+`real-preflight`); it's the operational runbook for the user's first
+real-board session.
+
+### 21.5 Test fixture pollution guard (Phase 6, test hardening)
+
+`tests/unit/test_hardware_risk.py` and `tests/unit/test_project_brain.py`
+`copy_fixture` helpers now strip `.hardware-butler/` scratch state after
+copying the fixture. Discovered when a `research --root
+tests/fixtures/cubemx-basic` smoke test wrote generated evidence under
+the fixture's `.hardware-butler/research/`, which the scanner then picked
+up — masking the "missing chip documents" and "missing manual" risk
+assertions. Both helpers now defensively strip the scratch dir, so future
+ad-hoc CLI invocations against the fixture cannot silently flip these
+assertions.
+
+### Verification
+
+- 632 tests pass / 10 skipped (was 504 at HANDOFF §20; +128 tests, +1 new
+  test file, +1 new docs file, +1 new installer).
+- ruff + mypy clean on tools/ (63 files, was 62) + gui/ + tests/.
+- Plugin re-synced; `test_plugin_sync` passes (132 subtests).
+- GUI smoke test (offscreen PyQt6) constructs all new widgets and verifies
+  all 4 input-validation guards.

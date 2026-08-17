@@ -2,6 +2,50 @@
 
 All notable changes are documented here.
 
+## Unreleased
+
+### Added (2026-08-17 takeover session + Phase 6/7/8)
+
+- GUI "工具" tab consolidating 6 high-value CLI subcommands (real-preflight,
+  classify-log, firmware-plan, firmware-patch, advise-pin, patch-ioc) and a
+  research shortcut that jumps to the existing "资料搜索" tab. Real-hardware
+  actions (plan-action / execute-action) stay behind the Actions tab's
+  confirmation-token flow — no new safety surface introduced.
+- `tests/unit/test_gui_tools_tab.py` (8 tests, skipped when PyQt6 absent):
+  tab-order stability, widget construction, handler wiring, and four
+  input-validation guards (real-preflight / classify-log require input;
+  firmware-plan / advise-pin pass through optional fields).
+- `tools/install_plugin_sync_hook.py`: idempotent git pre-commit hook that
+  re-runs `package_hardware_butler_plugin.py` when source files change and
+  auto-stages the resulting plugin diff. Eliminates the silent drift that
+  `test_plugin_sync.py` only catches downstream.
+- 13 new AVR/Nordic adapter tests covering build/observe/flash fallback
+  chains, programmer env-var override, canonical-chip pass-through, and
+  tool-detection key sets. Adapter coverage on `tools/vendor_adapters/` is
+  now uniformly exercised across all 5 vendor families.
+- `docs/REAL_BOARD_DAY_RUNBOOK.md`: consolidated, board-day-only checklist
+  for going from mock-mode to real flash. Covers pre-flight, mock dry-run,
+  board connection, bench-runbook generation, value-sanity gate, env-var
+  opt-in, real workflow execution, failure-mode triage, and the safety
+  contract.
+
+### Fixed
+
+- `tests/unit/test_hardware_risk.py` and `tests/unit/test_project_brain.py`
+  `copy_fixture` helpers now strip `.hardware-butler/` scratch state after
+  copying the fixture. Previously, ad-hoc CLI invocations against the
+  fixture (e.g. `research --root tests/fixtures/cubemx-basic`) would write
+  generated evidence under the fixture's `.hardware-butler/research/`,
+  which the scanner then picked up — masking the "missing chip documents"
+  and "missing manual" assertions in subsequent test runs.
+- Re-synced plugin runtime with the latest `embeddedskills/` defensive
+  assertions (`assert proc.stderr is not None` etc.) that had drifted.
+
+### Verification
+
+- 632 passed / 10 skipped (was 477 at takeover; +155 tests).
+- ruff + mypy clean on tools/ (63 files), gui/, tests/.
+
 ## 0.1.0 - GitHub Launch Candidate
 
 First public launch candidate for Hardware Butler: a safe-first embedded
