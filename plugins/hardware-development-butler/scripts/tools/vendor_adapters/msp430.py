@@ -47,6 +47,13 @@ class MSP430Adapter(VendorAdapter):
             return "dslite"
         return ""
 
+    def _pick_transport(self) -> str:
+        """Choose the mspdebug transport. rf2500 is the MSP430 LaunchPad's
+        ezFET/UIF default; tilib is for XDS110/libmsp430.so; uif is for
+        eZ430-UIF; bsl is the bootstrap loader. Env-overridable."""
+        import os
+        return os.environ.get("HARDWARE_BUTLER_MSP430_TRANSPORT", "rf2500")
+
     def build_command(self, ctx: dict[str, Any]) -> list[str]:
         project_root = ctx.get("project_root", ".")
         if shutil.which("make"):
@@ -58,7 +65,11 @@ class MSP430Adapter(VendorAdapter):
         elf = ctx.get("elf", "firmware.elf")
         target = ctx.get("target", "MSP430G2553")
         if tool == "mspdebug":
-            return ["mspdebug", "--allow-flash-write", "rf2500", "prog", elf]
+            transport = self._pick_transport()
+            args = ["mspdebug", "--allow-flash-write", transport, "prog", elf]
+            if target:
+                args.extend(["-d", str(target)])
+            return args
         if tool == "dslite":
             return ["dslite", "flash", "--config", f"{target}.ccxml", elf]
         return []
@@ -68,7 +79,7 @@ class MSP430Adapter(VendorAdapter):
         baud = ctx.get("baud", "9600")
         if port:
             return ["python", "-m", "serial.tools.miniterm", port, baud]
-        return ["python", "-c", "print('no serial port configured')"]
+        return []
 
     def datasheet_queries(self, part: str) -> list[str]:
         return [

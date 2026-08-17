@@ -241,6 +241,11 @@ def test_call_llm_401_returns_fatal_without_retry(tmp_path: Path, monkeypatch) -
     assert result["status"] == "error"
     assert result["error_kind"] == "fatal"
     assert calls["n"] == 1
+    # Bug fix (Phase 16): attempts must reflect the actual number of HTTP
+    # calls made, NOT the MAX_ATTEMPTS ceiling. A 401 fails on attempt 1, so
+    # attempts=1. (Previously this was hardcoded to MAX_ATTEMPTS=3, which
+    # misreported fatal-at-first-try errors as having exhausted all retries.)
+    assert result["attempts"] == 1
 
 
 def test_call_llm_unknown_provider_returns_error_without_http(tmp_path: Path, monkeypatch) -> None:

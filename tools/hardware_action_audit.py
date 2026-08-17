@@ -9,9 +9,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import runtime_context
-import safe_io
-
 _log_locks: dict[str, threading.Lock] = {}
 _log_locks_lock = threading.Lock()
 
@@ -54,44 +51,81 @@ def _get_log_lock(log_path: str) -> threading.Lock:
 
 
 def append_event(root: Path, event: dict[str, Any]) -> str:
+    """Append a single JSONL line using true append mode (no read-modify-rewrite).
+
+    The previous read-modify-rewrite pattern lost entries when two processes
+    appended concurrently: both read, both append, both write — the second
+    write overwrote the first. Using open("a") is atomic at the OS level
+    for writes under PIPE_BUF on POSIX, and on Windows the file is opened
+    in append mode which seeks to end on each write. Cross-process safety
+    is preserved by OS append semantics, not just the in-process Lock.
+    """
     path = safety_log_path(root)
     payload = {
         "schema_version": 1,
         "timestamp": datetime.now(timezone.utc).isoformat(),
         **event,
     }
+    line = json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n"
     lock = _get_log_lock(str(path))
     with lock:
-        existing = path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
-        content = existing + json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n"
-        return str(safe_io.safe_write_text(
-            path,
-            content,
-            allowed_roots=runtime_context.allowed_write_roots(root),
-        ))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(line)
+    return str(path)
 
 
 def consume_token(root: Path, *, token: str, plan: dict[str, Any], backend: str) -> dict[str, Any]:
-    if is_token_consumed(root, token):
-        return {
-            "status": "blocked-token-replay",
-            "consumed": False,
-            "token_hash": token_hash(token),
-            "log_path": str(safety_log_path(root)),
-        }
-    log_path = append_event(
-        root,
-        {
+    """Atomically check-then-consume a token under the audit log lock.
+
+    The previous implementation had a TOCTOU race: is_token_consumed read
+    the log, append_event wrote to it, but the lock only protected the
+    write — two concurrent calls could both pass the check. Now the
+    check+write happens atomically inside the same lock acquire.
+    """
+    path = safety_log_path(root)
+    target_hash = token_hash(token)
+    lock = _get_log_lock(str(path))
+    with lock:
+        # Re-check inside the lock to make check+consume atomic.
+        already_consumed = False
+        if path.exists():
+            for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+                try:
+                    item = json.loads(line)
+                except ValueError:
+                    continue
+                if (
+                    isinstance(item, dict)
+                    and item.get("event") == "token-consumed"
+                    and item.get("token_hash") == target_hash
+                ):
+                    already_consumed = True
+                    break
+        if already_consumed:
+            return {
+                "status": "blocked-token-replay",
+                "consumed": False,
+                "token_hash": target_hash,
+                "log_path": str(path),
+            }
+        # Consume: append the token-consumed event under the same lock.
+        payload = {
+            "schema_version": 1,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "event": "token-consumed",
-            "token_hash": token_hash(token),
+            "token_hash": target_hash,
             "plan_id": (plan.get("confirmation_record") or {}).get("plan_id", ""),
             "action": plan.get("action", ""),
             "backend": backend,
             "hardware_side_effect": bool(plan.get("hardware_side_effect")),
             "controlled_local_action": bool(plan.get("controlled_local_action")),
-        },
-    )
-    return {"status": "ok", "consumed": True, "token_hash": token_hash(token), "log_path": log_path}
+        }
+        line = json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(line)
+    return {"status": "ok", "consumed": True, "token_hash": target_hash, "log_path": str(path)}
 
 
 def record_result(root: Path, *, token: str, plan: dict[str, Any], backend: str, result: dict[str, Any]) -> str:

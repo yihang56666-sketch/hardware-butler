@@ -454,3 +454,39 @@ def test_stage_build_falls_back_when_pio_missing(tmp_path: Path, monkeypatch: py
     assert result.status == "completed"
     assert result.evidence["build_executed"] is False
     assert "plan-only" in result.evidence.get("reason", "")
+
+
+# --- Phase 16 regression tests for audit-discovered bug fixes ---
+
+
+def test_canonical_chip_does_not_corrupt_bare_model_numbers() -> None:
+    """Bare STM32 model numbers end in a digit preceded by another digit
+    (e.g. STM32F407, STM32G474, STM32H723, STM32L432). The old rule
+    'last char is a digit -> strip and append x' corrupted these into
+    non-existent targets (STM32F40x, STM32G47x, STM32H72x, STM32L43x),
+    breaking pyOCD/probe-rs on real hardware. The fix only strips when
+    the character before the trailing digit is a letter (the package
+    code: VGT, RGT, ZIT, etc.)."""
+    adapter = vendor_adapters.get_adapter("stm32")
+    assert adapter is not None
+    # Bare model numbers — must pass through unchanged.
+    assert adapter.canonical_chip("STM32F407") == "STM32F407"
+    assert adapter.canonical_chip("STM32F103") == "STM32F103"
+    assert adapter.canonical_chip("STM32G474") == "STM32G474"
+    assert adapter.canonical_chip("STM32H723") == "STM32H723"
+    assert adapter.canonical_chip("STM32L432") == "STM32L432"
+    # Orderable parts with package code — still strip correctly.
+    assert adapter.canonical_chip("STM32F407VGT6") == "STM32F407VGTx"
+    assert adapter.canonical_chip("STM32G474RBT6") == "STM32G474RBTx"
+
+
+def test_canonical_chip_preserves_lowercase_x_suffix() -> None:
+    """Already-canonical .ioc names like 'STM32F407VGTx' must stay lowercase
+    'x' — pyOCD/probe-rs reject 'STM32F407VGTX' (uppercase). The old code
+    uppercased the entire string including the trailing x."""
+    adapter = vendor_adapters.get_adapter("stm32")
+    assert adapter is not None
+    assert adapter.canonical_chip("STM32F407VGTx") == "STM32F407VGTx"
+    assert adapter.canonical_chip("STM32F429ZITx") == "STM32F429ZITx"
+    # Case-insensitive input still produces lowercase-x output.
+    assert adapter.canonical_chip("stm32f407vgtx") == "STM32F407VGTx"

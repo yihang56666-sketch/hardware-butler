@@ -228,9 +228,10 @@ def test_imxrt_flash_command_falls_back_to_pyocd() -> None:
 def test_imxrt_flash_command_falls_back_to_jlink() -> None:
     adapter = vendor_adapters.get_adapter("imxrt")
     assert adapter is not None
-    with patch("vendor_adapters.imxrt.shutil.which", side_effect=lambda n: "/usr/bin/" + n if n == "JLinkExe" else ""):
+    with patch("vendor_adapters.imxrt._segger_jlink", return_value="/usr/bin/JLink.exe"), \
+         patch("vendor_adapters.imxrt.shutil.which", return_value=""):
         cmd = adapter.flash_command({"elf": "fw.elf", "target": "MIMXRT1062"})
-    assert cmd[0] == "JLinkExe"
+    assert cmd[0] == "JLink.exe"
 
 
 def test_imxrt_flash_command_empty_when_no_tools() -> None:
@@ -345,12 +346,10 @@ def test_rx_flash_command_falls_back_to_jlink() -> None:
     adapter = vendor_adapters.get_adapter("rx")
     assert adapter is not None
 
-    def which(name: str) -> str:
-        return "/usr/bin/" + name if name == "JLinkExe" else ""
-
-    with patch("vendor_adapters.rx.shutil.which", side_effect=which):
+    with patch("vendor_adapters.rx._segger_jlink", return_value="/usr/bin/JLink.exe"), \
+         patch("vendor_adapters.rx.shutil.which", return_value=""):
         cmd = adapter.flash_command({"elf": "fw.mot", "target": "RX65N"})
-    assert cmd[0] == "JLinkExe"
+    assert cmd[0] == "JLink.exe"
 
 
 def test_rx_flash_command_empty_when_no_tools() -> None:

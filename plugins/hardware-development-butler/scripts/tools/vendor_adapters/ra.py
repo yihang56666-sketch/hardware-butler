@@ -19,7 +19,7 @@ from __future__ import annotations
 import shutil
 from typing import Any
 
-from vendor_adapters import VendorAdapter, register_adapter
+from vendor_adapters import VendorAdapter, _segger_jlink, register_adapter
 
 
 class RAAdapter(VendorAdapter):
@@ -37,8 +37,8 @@ class RAAdapter(VendorAdapter):
     def detect_tools(self) -> dict[str, bool]:
         return {
             "arm-none-eabi-gcc": bool(shutil.which("arm-none-eabi-gcc")),
-            "JLinkExe": bool(shutil.which("JLinkExe")),
-            "JLink.exe": bool(shutil.which("JLink.exe")),
+            "JLinkExe": bool(_segger_jlink()),
+            "JLink.exe": bool(_segger_jlink()),
             "pyocd": bool(shutil.which("pyocd")),
             "openocd": bool(shutil.which("openocd")),
             "probe-rs": bool(shutil.which("probe-rs")),
@@ -48,9 +48,8 @@ class RAAdapter(VendorAdapter):
     def _pick_flash_tool(self) -> str:
         """Prefer J-Link (Renesas official for RA); fall back to pyOCD (RA6
         supported) then openocd (limited RA support)."""
-        for tool in ("JLinkExe", "JLink.exe"):
-            if shutil.which(tool):
-                return tool
+        if _segger_jlink():
+            return "JLink.exe"
         if shutil.which("pyocd"):
             return "pyocd"
         if shutil.which("openocd"):
@@ -109,18 +108,21 @@ class RAAdapter(VendorAdapter):
         ]
 
     def platformio_board(self, part: str) -> str:
-        """Map RA part to PlatformIO board id (renesas-ra platform)."""
+        """Map RA part to PlatformIO board id (renesas-ra platform).
+
+        Note: Arduino Portenta C33 uses RA6M5 (NOT RA4M3 as some docs claim).
+        RA4M2/RA4M3 don't have a stock PlatformIO board definition that
+        matches their memory map; return "" so the workflow falls back to
+        arm-none-eabi-gcc + the adapter's own build_command path."""
         p = part.upper()
         if "RA4M1" in p:
             return "uno_r4"  # Arduino Uno R4 uses RA4M1
-        if "RA4M2" in p or "RA4M3" in p:
-            return "portenta_c33"  # Arduino Portenta C33 uses RA4M3
         if "RA6M2" in p:
             return "ra6m2_ek"
         if "RA6M3" in p:
             return "ra6m3_ek"
         if "RA6M5" in p:
-            return "ra6m5_ek"
+            return "ra6m5_ek"  # also matches Portenta C33 (RA6M5)
         return "uno_r4"
 
     def _platformio_platform(self) -> str:

@@ -23,7 +23,7 @@ from __future__ import annotations
 import shutil
 from typing import Any
 
-from vendor_adapters import VendorAdapter, register_adapter
+from vendor_adapters import VendorAdapter, _segger_jlink, register_adapter
 
 
 class RXAdapter(VendorAdapter):
@@ -43,8 +43,8 @@ class RXAdapter(VendorAdapter):
             "rx-elf-gcc": bool(shutil.which("rx-elf-gcc")),
             "cc-rx": bool(shutil.which("cc-rx")),
             "rfp-cli": bool(shutil.which("rfp-cli")),
-            "JLinkExe": bool(shutil.which("JLinkExe")),
-            "JLink.exe": bool(shutil.which("JLink.exe")),
+            "JLinkExe": bool(_segger_jlink()),
+            "JLink.exe": bool(_segger_jlink()),
             "openocd": bool(shutil.which("openocd")),
             "make": bool(shutil.which("make")),
         }
@@ -54,9 +54,8 @@ class RXAdapter(VendorAdapter):
         to J-Link (supports RX65N/RX72N in RX mode); openocd last resort."""
         if shutil.which("rfp-cli"):
             return "rfp-cli"
-        for tool in ("JLinkExe", "JLink.exe"):
-            if shutil.which(tool):
-                return tool
+        if _segger_jlink():
+            return "JLink.exe"
         if shutil.which("openocd"):
             return "openocd"
         return ""

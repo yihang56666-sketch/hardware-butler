@@ -21,7 +21,7 @@ from __future__ import annotations
 import shutil
 from typing import Any
 
-from vendor_adapters import VendorAdapter, register_adapter
+from vendor_adapters import VendorAdapter, _segger_jlink, register_adapter
 
 
 class MAX32Adapter(VendorAdapter):
@@ -42,16 +42,19 @@ class MAX32Adapter(VendorAdapter):
             "openocd": bool(shutil.which("openocd")),
             "pyocd": bool(shutil.which("pyocd")),
             "probe-rs": bool(shutil.which("probe-rs")),
-            "JLinkExe": bool(shutil.which("JLinkExe")),
-            "JLink.exe": bool(shutil.which("JLink.exe")),
+            "JLinkExe": bool(_segger_jlink()),
+            "JLink.exe": bool(_segger_jlink()),
             "make": bool(shutil.which("make")),
         }
 
     def _pick_flash_tool(self) -> str:
         """Prefer openocd (Maxim official, well-supported); fall back to
         pyOCD, J-Link, probe-rs."""
-        for tool in ("openocd", "pyocd", "JLinkExe", "JLink.exe", "probe-rs"):
-            if shutil.which(tool):
+        for tool in ("openocd", "pyocd", "_jlink", "probe-rs"):
+            if tool == "_jlink":
+                if _segger_jlink():
+                    return "JLink.exe"
+            elif shutil.which(tool):
                 return tool
         return ""
 

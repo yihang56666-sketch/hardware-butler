@@ -19,7 +19,7 @@ from __future__ import annotations
 import shutil
 from typing import Any
 
-from vendor_adapters import VendorAdapter, register_adapter
+from vendor_adapters import VendorAdapter, _segger_jlink, register_adapter
 
 
 class LPCAdapter(VendorAdapter):
@@ -40,16 +40,19 @@ class LPCAdapter(VendorAdapter):
             "probe-rs": bool(shutil.which("probe-rs")),
             "pyocd": bool(shutil.which("pyocd")),
             "openocd": bool(shutil.which("openocd")),
-            "JLinkExe": bool(shutil.which("JLinkExe")),
-            "JLink.exe": bool(shutil.which("JLink.exe")),
+            "JLinkExe": bool(_segger_jlink()),
+            "JLink.exe": bool(_segger_jlink()),
             "make": bool(shutil.which("make")),
         }
 
     def _pick_flash_tool(self) -> str:
         """Prefer probe-rs (cross-vendor, open source); fall back to pyOCD,
         J-Link, or openocd."""
-        for tool in ("probe-rs", "pyocd", "JLinkExe", "JLink.exe", "openocd"):
-            if shutil.which(tool):
+        for tool in ("probe-rs", "pyocd", "_jlink", "openocd"):
+            if tool == "_jlink":
+                if _segger_jlink():
+                    return "JLink.exe"
+            elif shutil.which(tool):
                 return tool
         return ""
 

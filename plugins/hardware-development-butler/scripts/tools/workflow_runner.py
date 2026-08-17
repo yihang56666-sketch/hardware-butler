@@ -43,7 +43,7 @@ import vendor_adapters.riscv
 import vendor_adapters.rx
 import vendor_adapters.stm32
 import vendor_adapters.tiva
-from safety_gate import check_goal_token, mint_goal_token
+from safety_gate import check_goal_token, evaluate_value_safety, mint_goal_token
 
 STATE_DIR = ".hardware-butler"
 STATE_FILE = "workflow-state.json"
@@ -1336,52 +1336,81 @@ def _stage_flash(
     flash_result: dict[str, Any] = {}
     flash_backend_used = ""
     if status == "completed" and os.environ.get("HARDWARE_BUTLER_ENABLE_REAL_FLASH") == "1":
-        adapter = _get_vendor_adapter(state)
-        if adapter:
-            flash_ctx = {
-                "target": target,
-                "port": state.get("context", {}).get("probe", ""),
-                "elf": state.get("context", {}).get("elf", "") or "build/firmware.elf",
-                "probe": ctx.probe,
+        # Defense-in-depth: re-run value-sanity against the actual flash_ctx
+        # before any subprocess touches hardware. The goal_token binds to
+        # workflow_id + scope but NOT to voltage/current/artifact_hash, so an
+        # agent that tampered with state["context"] between mint and flash
+        # would bypass the value gate. Re-check here against the real elf
+        # path + the runbook's plan fields.
+        plan = (runbook.get("action_plan") or {}).get("plan", {}) if isinstance(runbook.get("action_plan"), dict) else {}
+        value_check = evaluate_value_safety("build-flash", {
+            "target": target,
+            "probe": ctx.probe,
+            "voltage": plan.get("voltage", ""),
+            "current_limit": plan.get("current_limit", ""),
+            "erase_scope": plan.get("erase_scope", ""),
+            "artifact": state.get("context", {}).get("elf", "") or "build/firmware.elf",
+            "artifact_hash": plan.get("artifact_hash", ""),
+            "backend": ctx.backend,
+        })
+        if value_check.get("status") == "blocked":
+            status = "failed"
+            flash_result = {
+                "status": "error",
+                "stderr": f"value-sanity blocked real flash: {value_check.get('reason', '')}",
+                "value_safety": value_check,
             }
-            # P3 Step F: prefer probe-rs for cross-vendor flash, fall back
-            # to adapter native flash_command, then to embeddedskills scripts.
-            probe_rs_cmd = adapter.flash_via_probe_rs(flash_ctx)
-            if probe_rs_cmd:
-                flash_result = _run_subprocess(probe_rs_cmd, timeout_s=120)
-                flash_executed = flash_result["status"] == "ok"
-                flash_backend_used = "probe-rs"
-                if not flash_executed:
-                    status = "failed"
-            if not flash_result:
-                cmd = adapter.flash_command(flash_ctx)
-                if cmd:
-                    flash_result = _run_subprocess(cmd, timeout_s=120)
+        elif value_check.get("warnings"):
+            # Record warnings in evidence but proceed — the user opted in
+            # to real flash and the values are physically plausible.
+            flash_result.setdefault("value_safety", value_check)
+        if status == "completed":
+            adapter = _get_vendor_adapter(state)
+            if adapter:
+                flash_ctx = {
+                    "target": target,
+                    "port": state.get("context", {}).get("probe", ""),
+                    "elf": state.get("context", {}).get("elf", "") or "build/firmware.elf",
+                    "probe": ctx.probe,
+                }
+                # P3 Step F: prefer probe-rs for cross-vendor flash, fall back
+                # to adapter native flash_command, then to embeddedskills scripts.
+                probe_rs_cmd = adapter.flash_via_probe_rs(flash_ctx)
+                if probe_rs_cmd:
+                    flash_result = _run_subprocess(probe_rs_cmd, timeout_s=120)
                     flash_executed = flash_result["status"] == "ok"
-                    flash_backend_used = adapter.family
+                    flash_backend_used = "probe-rs"
                     if not flash_executed:
                         status = "failed"
-        if not flash_result:
-            chip_stage = next((s for s in state["stages"] if s["id"] == "chip-selection"), None)
-            backends = (chip_stage or {}).get("evidence", {}).get("backends", {}) if chip_stage else {}
-            flash_backend = backends.get("backends", {}).get("flash", "unknown") if isinstance(backends.get("backends"), dict) else "unknown"
-            script_map = {
-                "openocd": "openocd/scripts/openocd_run.py",
-                "jlink": "jlink/scripts/jlink_exec.py",
-                "probe-rs": "probe-rs/scripts/probe_rs_exec.py",
-            }
-            script = script_map.get(flash_backend)
-            if script:
-                flash_args = ["--workspace", str(root), "--action", "flash"]
-                if target:
-                    flash_args.extend(["--target", target])
-                if ctx.probe:
-                    flash_args.extend(["--probe", ctx.probe])
-                flash_result = _run_embeddedskills_script(script, flash_args, timeout_s=120)
-                flash_executed = flash_result["status"] == "ok"
-                flash_backend_used = flash_backend
-                if not flash_executed:
-                    status = "failed"
+                if not flash_result:
+                    cmd = adapter.flash_command(flash_ctx)
+                    if cmd:
+                        flash_result = _run_subprocess(cmd, timeout_s=120)
+                        flash_executed = flash_result["status"] == "ok"
+                        flash_backend_used = adapter.family
+                        if not flash_executed:
+                            status = "failed"
+            if not flash_result:
+                chip_stage = next((s for s in state["stages"] if s["id"] == "chip-selection"), None)
+                backends = (chip_stage or {}).get("evidence", {}).get("backends", {}) if chip_stage else {}
+                flash_backend = backends.get("backends", {}).get("flash", "unknown") if isinstance(backends.get("backends"), dict) else "unknown"
+                script_map = {
+                    "openocd": "openocd/scripts/openocd_run.py",
+                    "jlink": "jlink/scripts/jlink_exec.py",
+                    "probe-rs": "probe-rs/scripts/probe_rs_exec.py",
+                }
+                script = script_map.get(flash_backend)
+                if script:
+                    flash_args = ["--workspace", str(root), "--action", "flash"]
+                    if target:
+                        flash_args.extend(["--target", target])
+                    if ctx.probe:
+                        flash_args.extend(["--probe", ctx.probe])
+                    flash_result = _run_embeddedskills_script(script, flash_args, timeout_s=120)
+                    flash_executed = flash_result["status"] == "ok"
+                    flash_backend_used = flash_backend
+                    if not flash_executed:
+                        status = "failed"
 
     return StageResult(
         status=status,

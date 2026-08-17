@@ -167,6 +167,9 @@ def _call_with_retry(
         except Exception as exc:  # noqa: BLE001
             last_exc = exc
             last_kind = _classify_http_error(exc)
+            # Attach attempt count so callers can report accurately even
+            # when the exception is re-raised on final failure.
+            setattr(exc, "_hwbutler_attempts", attempt)
             if last_kind == "fatal" or attempt == MAX_ATTEMPTS:
                 # Non-retryable, or out of retries — surface to caller.
                 raise
@@ -214,6 +217,7 @@ def call_llm(
         if cached:
             return {"status": "ok", "text": str(cached.get("text", ""))}
         return {"status": "pending", "text": ""}
+    attempts_used = 1
     try:
         if config.provider == "anthropic":
             text, meta = _call_with_retry(
@@ -225,18 +229,23 @@ def call_llm(
             )
         else:
             return {"status": "error", "text": "", "error": f"unknown provider: {config.provider}"}
+        attempts_used = int(meta.get("attempts", 1))
         result: dict[str, Any] = {"status": "ok", "text": text}
         # Surface retry metadata when retries actually happened.
-        if meta.get("attempts", 1) > 1:
-            result["attempts"] = meta["attempts"]
+        if attempts_used > 1:
+            result["attempts"] = attempts_used
         return result
     except (urllib.error.URLError, urllib.error.HTTPError, RuntimeError, ValueError, TimeoutError, ConnectionError, OSError) as exc:
+        # Read the actual attempt count from the exception (attached by
+        # _call_with_retry). Falls back to 1 if the exception didn't come
+        # from the retry wrapper (e.g. unknown provider short-circuit).
+        attempts_used = int(getattr(exc, "_hwbutler_attempts", 1))
         return {
             "status": "error",
             "text": "",
             "error": str(exc),
             "error_kind": _classify_http_error(exc),
-            "attempts": MAX_ATTEMPTS,
+            "attempts": attempts_used,
         }
 
 

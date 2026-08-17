@@ -63,12 +63,11 @@ def test_ra_flash_command_prefers_jlink() -> None:
     adapter = vendor_adapters.get_adapter("ra")
     assert adapter is not None
 
-    def which(name: str) -> str:
-        return "/usr/bin/" + name if name in ("JLinkExe", "pyocd", "openocd", "probe-rs") else ""
-
-    with patch("vendor_adapters.ra.shutil.which", side_effect=which):
+    # J-Link present; pyocd/openocd also present but J-Link is preferred.
+    with patch("vendor_adapters.ra._segger_jlink", return_value="/usr/bin/JLink.exe"), \
+         patch("vendor_adapters.ra.shutil.which", return_value="/usr/bin/pyocd"):
         cmd = adapter.flash_command({"elf": "fw.elf", "target": "R7FA6M5BH"})
-    assert cmd[0] == "JLinkExe"
+    assert cmd[0] == "JLink.exe"
     assert "-device" in cmd and "R7FA6M5BH" in cmd
 
 
@@ -129,7 +128,10 @@ def test_ra_platformio_board_mapping() -> None:
     adapter = vendor_adapters.get_adapter("ra")
     assert adapter is not None
     assert adapter.platformio_board("RA4M1") == "uno_r4"
-    assert adapter.platformio_board("RA4M3") == "portenta_c33"
+    # RA4M2/RA4M3 have no stock PlatformIO board matching their memory map;
+    # fall back to uno_r4 (RA4M1) rather than wrong portenta_c33 (RA6M5).
+    assert adapter.platformio_board("RA4M2") == "uno_r4"
+    assert adapter.platformio_board("RA4M3") == "uno_r4"
     assert adapter.platformio_board("RA6M3") == "ra6m3_ek"
     assert adapter.platformio_board("RA6M5") == "ra6m5_ek"
 
@@ -216,12 +218,10 @@ def test_lpc_flash_command_falls_back_to_jlink() -> None:
     adapter = vendor_adapters.get_adapter("lpc")
     assert adapter is not None
 
-    def which(name: str) -> str:
-        return "/usr/bin/" + name if name == "JLinkExe" else ""
-
-    with patch("vendor_adapters.lpc.shutil.which", side_effect=which):
+    with patch("vendor_adapters.lpc._segger_jlink", return_value="/usr/bin/JLink.exe"), \
+         patch("vendor_adapters.lpc.shutil.which", return_value=""):
         cmd = adapter.flash_command({"elf": "fw.elf", "target": "LPC1768"})
-    assert cmd[0] == "JLinkExe"
+    assert cmd[0] == "JLink.exe"
     assert "-device" in cmd and "LPC1768" in cmd
 
 
@@ -413,3 +413,83 @@ def test_pic32_programmer_default_is_pickit3(monkeypatch) -> None:
     # pic32prog auto-detects; explicit programmer only added when env override
     # is set. Default behavior: no --programmer flag.
     assert "--programmer" not in cmd
+
+
+# --- Phase 16 regression: _segger_jlink JDK guard ---
+
+
+def test_segger_jlink_rejects_jdk_paths() -> None:
+    """shutil.which('JLink.exe') on Windows resolves to the JDK's jlink.exe
+    (Java module linker) on case-insensitive filesystems. The _segger_jlink
+    helper must reject paths containing JDK markers."""
+    from unittest.mock import patch
+
+    import vendor_adapters.imxrt  # noqa: F401 — ensure adapter is registered
+    import vendor_adapters.lpc  # noqa: F401
+    import vendor_adapters.max32  # noqa: F401
+    import vendor_adapters.ra  # noqa: F401
+    import vendor_adapters.rx  # noqa: F401
+    # JDK path — must be rejected.
+    with patch("vendor_adapters.shutil.which", return_value="C:/Program Files/Java/jdk-17/bin/JLink.exe"):
+        assert vendor_adapters._segger_jlink() == ""
+    # Temurin path — must be rejected.
+    with patch("vendor_adapters.shutil.which", return_value="C:/adoptium/temurin-17/bin/JLink.exe"):
+        assert vendor_adapters._segger_jlink() == ""
+    # Zulu path — must be rejected.
+    with patch("vendor_adapters.shutil.which", return_value="C:/zulu/bin/JLink.exe"):
+        assert vendor_adapters._segger_jlink() == ""
+    # Real SEGGER path — must be accepted.
+    with patch("vendor_adapters.shutil.which", return_value="C:/Program Files/SEGGER/JLink/JLink.exe"):
+        assert vendor_adapters._segger_jlink() == "C:/Program Files/SEGGER/JLink/JLink.exe"
+
+
+def test_ra_adapter_uses_segger_jlink_guard_for_jlink_detection() -> None:
+    """The RA adapter's detect_tools must use _segger_jlink() (which rejects
+    JDK paths) rather than raw shutil.which('JLink.exe'). Otherwise Windows
+    hosts with a JDK installed would false-positive detect J-Link and break
+    the flash fallback chain."""
+    from unittest.mock import patch
+    adapter = vendor_adapters.get_adapter("ra")
+    assert adapter is not None
+    # JDK path present — JLink.exe must report False, not True.
+    with patch("vendor_adapters.shutil.which", return_value="C:/Program Files/Java/jdk-17/bin/JLink.exe"):
+        tools = adapter.detect_tools()
+    assert tools["JLink.exe"] is False
+    assert tools["JLinkExe"] is False
+
+
+def test_imxrt_adapter_uses_segger_jlink_guard() -> None:
+    """Same JDK-guard check for the i.MX RT adapter."""
+    from unittest.mock import patch
+    adapter = vendor_adapters.get_adapter("imxrt")
+    assert adapter is not None
+    with patch("vendor_adapters.shutil.which", return_value="C:/adoptium/temurin-17/bin/JLink.exe"):
+        tools = adapter.detect_tools()
+    assert tools["JLink.exe"] is False
+
+
+def test_lpc_adapter_uses_segger_jlink_guard() -> None:
+    from unittest.mock import patch
+    adapter = vendor_adapters.get_adapter("lpc")
+    assert adapter is not None
+    with patch("vendor_adapters.shutil.which", return_value="C:/zulu/bin/JLink.exe"):
+        tools = adapter.detect_tools()
+    assert tools["JLink.exe"] is False
+
+
+def test_max32_adapter_uses_segger_jlink_guard() -> None:
+    from unittest.mock import patch
+    adapter = vendor_adapters.get_adapter("max32")
+    assert adapter is not None
+    with patch("vendor_adapters.shutil.which", return_value="C:/Program Files/Java/jdk-17/bin/JLink.exe"):
+        tools = adapter.detect_tools()
+    assert tools["JLink.exe"] is False
+
+
+def test_rx_adapter_uses_segger_jlink_guard() -> None:
+    from unittest.mock import patch
+    adapter = vendor_adapters.get_adapter("rx")
+    assert adapter is not None
+    with patch("vendor_adapters.shutil.which", return_value="C:/Program Files/Java/jdk-17/bin/JLink.exe"):
+        tools = adapter.detect_tools()
+    assert tools["JLink.exe"] is False

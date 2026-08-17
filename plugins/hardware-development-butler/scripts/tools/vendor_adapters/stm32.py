@@ -15,19 +15,7 @@ from __future__ import annotations
 import shutil
 from typing import Any
 
-from vendor_adapters import VendorAdapter, register_adapter
-
-
-def _segger_jlink() -> str:
-    """Resolve the Segger J-Link CLI, rejecting the JDK's jlink.exe that
-    shutil.which finds on case-insensitive Windows filesystems."""
-    found = shutil.which("JLink.exe") or ""
-    if not found:
-        return ""
-    lowered = found.lower().replace("\\", "/")
-    if any(marker in lowered for marker in ("/jdk", "/java", "adoptium", "temurin", "/zulu", "corretto")):
-        return ""
-    return found
+from vendor_adapters import VendorAdapter, _segger_jlink, register_adapter
 
 
 class STM32Adapter(VendorAdapter):
@@ -91,7 +79,18 @@ class STM32Adapter(VendorAdapter):
         normalized = part.strip().upper()
         if not normalized.startswith("STM32"):
             return part
-        if normalized[-1].isdigit() or normalized.endswith("X"):
+        if normalized.endswith("X"):
+            # Already canonical (.ioc convention) — uppercase everything
+            # except the trailing x, which must stay lowercase (pyOCD/
+            # probe-rs reject 'STM32F407VGTX' but accept 'STM32F407VGTx').
+            return normalized[:-1] + "x"
+        # Only strip the trailing digit when it's a package/temperature code
+        # — i.e. the character before it is a letter (the package code: VGT,
+        # RGT, H7, etc.). Bare model numbers like "STM32F407" or "STM32G474"
+        # end in a digit preceded by another digit; stripping would corrupt
+        # them into non-existent targets ("STM32F40x", "STM32G47x") and
+        # break pyOCD/probe-rs on real hardware.
+        if len(normalized) >= 2 and normalized[-1].isdigit() and normalized[-2].isalpha():
             return normalized[:-1] + "x"
         return normalized
 
@@ -125,7 +124,7 @@ class STM32Adapter(VendorAdapter):
         baud = ctx.get("baud", "115200")
         if port:
             return ["python", "-m", "serial.tools.miniterm", port, baud]
-        return ["python", "-c", "import pyocd; print('no serial port configured')"]
+        return []
 
     def datasheet_queries(self, part: str) -> list[str]:
         return [

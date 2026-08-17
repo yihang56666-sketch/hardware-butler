@@ -61,15 +61,22 @@ class ESP32Adapter(VendorAdapter):
         image = ctx.get("elf", "build/firmware.bin")
         if not tool:
             return []
-        args = [tool, "--port", port, "--baud", baud, "write_flash", addr, image]
+        args = [tool]
+        if port:
+            args.extend(["--port", port])
+        args.extend(["--baud", baud, "write_flash", addr, image])
         return args
 
     def observe_command(self, ctx: dict[str, Any]) -> list[str]:
         port = ctx.get("port", "")
         baud = ctx.get("baud", "115200")
         if shutil.which("idf.py"):
-            return ["idf.py", "-p", port, "monitor"]
-        return ["python", "-m", "serial.tools.miniterm", port, baud]
+            if port:
+                return ["idf.py", "-p", port, "monitor"]
+            return ["idf.py", "monitor"]
+        if port:
+            return ["python", "-m", "serial.tools.miniterm", port, baud]
+        return []
 
     def datasheet_queries(self, part: str) -> list[str]:
         return [
