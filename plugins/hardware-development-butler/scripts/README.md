@@ -81,13 +81,33 @@ python tools\hardware_butler.py workflow-run \
 
 开源依赖（可选，装了就能切真实硬件路径）：
 
+跨厂商工具（覆盖所有 14 个 vendor family）：
+
 | 工具 | 用途 | 安装 |
 |---|---|---|
-| PlatformIO | 跨厂商构建（STM32/ESP32/TI/AVR/RISC-V，600+ board） | `pip install platformio` |
-| probe-rs | 跨厂商烧录 + RTT 调试（Cortex-M + ESP32 + RP2040 + Nordic） | `cargo install probe-rs` 或下载二进制 |
-| pyserial | 串口观测 | `pip install pyserial` |
+| PlatformIO | 跨厂商构建（STM32/ESP32/TI/AVR/RISC-V/Renesas RA/NXP LPC/MAX32/i.MX RT，600+ board） | `pip install platformio` |
+| probe-rs | 跨厂商烧录 + RTT 调试（Cortex-M 全系 + ESP32 + RP2040 + Nordic） | `cargo install probe-rs` 或下载二进制 |
+| openocd | 跨厂商烧录 + 调试（Cortex-M/RISC-V/部分 C2000） | 系统包管理器或官网下载 |
+| J-Link | SEGGER 官方调试器（Renesas RA/RX、NXP LPC/i.MX RT、Maxim MAX32 推荐） | 官网下载 |
+| pyOCD | NXP 维护的 Cortex-M 调试器（LPC/MAX32/STM32/RA6 支持） | `pip install pyocd` |
+| pyserial | 串口观测（所有 family 都支持 UART observe fallback） | `pip install pyserial` |
 
-工作流检测到这些工具时优先用它们；没装时降级到 adapter 原生命令（cmake/gcc、pyOCD、JLink 等）。详见 [docs/HANDOFF.md](docs/HANDOFF.md) 第 14 节。
+厂商专用工具链（按 family 装其一即可）：
+
+| 工具 | Family | 用途 | 安装 |
+|---|---|---|---|
+| arm-none-eabi-gcc | stm32/esp32/tiva/ra/lpc/max32/imxrt | Cortex-M 通用 GCC | 系统包管理器 |
+| riscv64-unknown-elf-gcc | riscv | WCH CH32V / GD32V 32-bit RISC-V | xpack 或 WCH 官方 |
+| avr-gcc + avrdude | avr | ATmega/ATtiny/ATxmega 8-bit | 系统包管理器 |
+| msp430-gcc + mspdebug | msp430 | TI MSP430 16-bit ultra-low-power | 系统包管理器 |
+| xtensa-esp32-elf-gcc + esptool | esp32 | ESP32 Xtensa LX6/LX7 | ESP-IDF 或 PlatformIO |
+| xc32-gcc + pic32prog | pic32 | Microchip PIC32 MIPS | Microchip 官网 |
+| cl2000 + dslite | c2000 | TI C28x（无 GCC 移植） | TI C2000Ware |
+| rx-elf-gcc + rfp-cli | rx | Renesas RX CISC（含 E2 Lite 探针） | Renesas e² studio |
+| wlink | riscv | WCH CH32V 官方烧录器 | MounRiver Studio |
+| nrfjprog | nordic | Nordic nRF 官方烧录器 | nRF Connect SDK |
+
+工作流检测到这些工具时优先用它们；没装时降级到 adapter 原生命令（cmake/gcc、pyOCD、JLink 等）。详见 [docs/HANDOFF.md](docs/HANDOFF.md) §22.1。
 
 ## What This Is
 

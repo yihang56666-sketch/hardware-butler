@@ -980,7 +980,7 @@ class HardwareButlerWindow(QMainWindow):
         pf_form.setHorizontalSpacing(10)
         pf_form.setVerticalSpacing(6)
         self.tools_preflight_part = QLineEdit()
-        self.tools_preflight_part.setPlaceholderText("例如 STM32F407VGT6")
+        self.tools_preflight_part.setPlaceholderText("芯片型号，如 STM32F407VGT6 / ESP32-WROOM / nRF52840 / CH32V103 / RX65N / MIMXRT1052 / MAX32660 / PIC32MZ / LPC55S69 / TM4C123 / TMS320F28069 / RA6M3 / ATmega328P / MSP430G2553")
         self.tools_preflight_probe = QLineEdit()
         self.tools_preflight_probe.setPlaceholderText("可选探针，如 stlink-v3")
         pf_form.addWidget(QLabel("芯片"), 0, 0)

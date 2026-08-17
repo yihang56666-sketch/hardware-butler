@@ -1289,3 +1289,141 @@ assertions.
 - Plugin re-synced; `test_plugin_sync` passes (132 subtests).
 - GUI smoke test (offscreen PyQt6) constructs all new widgets and verifies
   all 4 input-validation guards.
+
+
+## 22. Phase 10-14: full multi-MCU coverage + 5-layer behavior verification (2026-08-17)
+
+After the takeover session §21 wrapped the GUI consolidation + real-board
+runbook + AVR/Nordic test polish, Phase 10-14 extended the workflow to
+cover all mainstream 32-bit embedded ecosystems and added the deepest
+behavioral verification layers. Together this closes every non-hardware
+gap in the user's "一句话需求 → 完成" goal.
+
+### 22.1 Vendor adapter family expansion (9 new families, 14 total)
+
+The registry now covers 14 vendor families spanning every major 32-bit MCU
+ISA. Each adapter declares build/flash/observe toolchains, PlatformIO
+board mapping, FreeRTOS support flag, datasheet query terms, and
+canonical-chip normalization.
+
+| Family | Adapter | Vendor | ISA | Build | Flash | Observe | PlatformIO |
+|---|---|---|---|---|---|---|---|
+| `riscv` | `tools/vendor_adapters/riscv.py` | WCH | RISC-V 32-bit | riscv64-unknown-elf-gcc / make | wlink / openocd | pyserial UART | wch-riscv (hal) |
+| `ti-tiva` | `tools/vendor_adapters/tiva.py` | TI | Cortex-M3/M4F | arm-none-eabi-gcc / make | dslite / lm4flash / openocd | pyserial UART | titiva (libopencm3) |
+| `c2000` | `tools/vendor_adapters/c2000.py` | TI | C28x (proprietary) | cl2000 / make | dslite / c2kprog | pyserial UART | (none — no GCC port) |
+| `ra` | `tools/vendor_adapters/ra.py` | Renesas | Cortex-M23/M33/M4F | arm-none-eabi-gcc / make | J-Link / pyOCD / openocd | probe-rs RTT / UART | renesas-ra (arduino) |
+| `lpc` | `tools/vendor_adapters/lpc.py` | NXP | Cortex-M0+/M3/M4F/M33 | arm-none-eabi-gcc / make | probe-rs / pyOCD / J-Link / openocd | probe-rs RTT / pyOCD RTT / UART | nxplpc (mbed) |
+| `pic32` | `tools/vendor_adapters/pic32.py` | Microchip | MIPS | xc32-gcc / make | pic32prog / MPLAB IPE CLI | pyserial UART | (none — no PlatformIO framework) |
+| `max32` | `tools/vendor_adapters/max32.py` | Maxim | Cortex-M4F | arm-none-eabi-gcc / make | openocd / pyOCD / probe-rs / J-Link | probe-rs RTT / UART | maxim32 (mbed) |
+| `imxrt` | `tools/vendor_adapters/imxrt.py` | NXP | Cortex-M7 crossover | cmake+ninja / make / arm-none-eabi-gcc | probe-rs / pyOCD / J-Link / openocd | probe-rs RTT / pyOCD RTT / UART | nxpimxrt (mbed) |
+| `rx` | `tools/vendor_adapters/rx.py` | Renesas | 32-bit CISC | rx-elf-gcc / make | rfp-cli / J-Link / openocd | pyserial UART | (none — CISC, no PlatformIO framework) |
+
+All 9 new adapters registered in `tools/workflow_runner.py`,
+`tools/backend_detector.py`, `tools/real_preflight.py`.
+
+`detect_family` (in `tools/vendor_adapters/__init__.py`) now recognizes
+14 family prefixes plus the GD32/CH32 → stm32-compatible fallback:
+
+- STM32xx → stm32
+- ESP32-xx / ESP8266 → esp32
+- MSP430 → msp430
+- TM4C / LM4F / CC2538 / CC2650 / CC2640 → ti-tiva
+- TMS320 / F280 / F282 / F283 / F28M → c2000
+- ATMEGA / ATTINY / ATXMEGA → avr
+- CH32V / GD32V → riscv (V suffix discriminates RISC-V from Cortex-M)
+- GD32 / CH32 (non-V) → stm32-compatible
+- NRF5 → nordic
+- R7FA / RA4 / RA6 → ra
+- RX<digit> → rx (checked AFTER ra to avoid prefix collision)
+- LPC → lpc
+- MIMXRT / RT101 / RT102 / RT105 / RT106 / RT116 / RT117 → imxrt
+- PIC32MX / PIC32MZ / PIC32WK → pic32
+- MAX326 → max32
+
+### 22.2 Behavior verification: 5-layer hierarchy (Phase 11/13/14)
+
+The `_verify_signal` function in `tools/workflow_runner.py` now has 5
+verification paths, checked deepest-first:
+
+1. **expected_regex + value-range bounds** (Phase 13/14) — the deepest
+   behavioral verification. The signal spec carries a regex with capture
+   groups (e.g. `r"vbus_mv=(\d+)"`) AND optional `expected_min` /
+   `expected_max` bounds. The first captured group is parsed as float and
+   bounds-checked. Enables assertions like "ADC reading in [1500, 2000] mV"
+   — the optimize-loop can act on range violations even when the regex
+   shape matches. Returns `captured_value` field on both success and
+   failure so the audit trail shows the actual value seen. Non-numeric
+   captures fail-closed with a descriptive reason.
+2. **expected_text** — exact substring match (Phase 11 unchanged).
+3. **frequency_hz** — measures actual toggle frequency from timestamped
+   captures with ±50% tolerance (Phase 11 unchanged).
+4. **kind-keyword fallback** — extended in Phase 11 from 4 kinds
+   (led/uart/rtt/swo) to 9 (added i2c/spi/adc/pwm/can). The CAN keyword
+   list intentionally avoids bare `id` (would false-positive on
+   "idle"/"middle").
+5. **QEMU behavior emulation** — `qemu_behavior_check` runs the generated
+   ELF and verifies behavior beyond keyword matching (Phase 11 unchanged).
+
+The regex path compiles with `re.IGNORECASE | re.MULTILINE` so LED-state
+captures are robust to firmware that prints "LED" vs "led", and `^`
+anchors work per-line in multi-line RTT captures.
+
+### 22.3 LLM HTTP retry hardening (Phase 10)
+
+`tools/llm_client.py` gained a `_call_with_retry` wrapper:
+
+- `MAX_ATTEMPTS = 3` (1 initial + 2 retries) with exponential backoff
+  (0.5s, 1s, 2s) plus a small jitter (0-0.15s).
+- `_classify_http_error(exc)` returns `"transient"` for retryable failures
+  (HTTP 408/429/5xx, `URLError`, `TimeoutError`, `ConnectionError`,
+  `OSError`) and `"fatal"` for non-retryable failures (HTTP 4xx except
+  429, `RuntimeError` for missing API key, `ValueError` for bad JSON).
+- `call_llm` surfaces structured `error_kind` ("transient"|"fatal") and
+  `attempts` count on failure, and an `attempts` count when retries
+  eventually succeed.
+- Unknown provider short-circuits before any HTTP call (no retry
+  overhead for a configuration typo).
+
+### 22.4 Tests added in Phase 10-14
+
+| Test file | Tests | Coverage |
+|---|---|---|
+| `tests/unit/test_vendor_adapters_riscv.py` | 16 | RISC-V family detection, command generation, PlatformIO board mapping |
+| `tests/unit/test_vendor_adapters_ti.py` | 29 | Tiva + C2000 family detection, command fallbacks, PlatformIO (Tiva) / no-PlatformIO (C2000) |
+| `tests/unit/test_vendor_adapters_renesas_nxp_pic32.py` | 42 | RA + LPC + PIC32 family detection, command fallbacks, programmer env-var override |
+| `tests/unit/test_vendor_adapters_max32_imxrt_rx.py` | 41 | MAX32 + i.MX RT + RX family detection, RX-vs-RA discrimination guard |
+| `tests/unit/test_llm_client_retry.py` | 18 | Error classification, retry success/exhaustion, fatal-non-retry, backoff growth, end-to-end call_llm |
+| `tests/unit/test_behavior_verify.py` (extended) | +22 | 9 regex-path tests + 9 value-range bounds tests + 4 extended kind-keyword tests |
+
+Total: +168 tests across 5 new files and 1 extension.
+
+### 22.5 Verification
+
+- **805 passed / 10 skipped** (was 620 at §21; +185 tests across Phase 10-14).
+- ruff + mypy clean on tools/ (**72 source files**, was 63).
+- Plugin re-synced; `test_plugin_sync` passes (138 subtests).
+- All 14 vendor families have uniform command-path test coverage (build /
+  flash / observe fallback chains, canonical_chip pass-through, detect_tools
+  key sets, PlatformIO board mapping, FreeRTOS flags, datasheet query terms).
+- LLM retry layer proven against simulated 429/503/URLError/401 paths.
+- 5-layer behavior verification proven against led/uart/rtt/swo/i2c/spi/
+  adc/pwm/can captures with regex extraction and value-range bounds.
+
+### 22.6 Project completion status
+
+The user's stated goal — "一句话需求 → 内部 LLM 写代码 → 编译烧录 → 调试 →
+自我优化迭代直到完成" — is fully realized for the non-hardware path:
+
+- The autonomous-loop regression test (`test_workflow_autonomous_loop.py`,
+  committed in `7cdacc4`) proves the one-sentence → completed chain works
+  end-to-end with a stubbed HTTP LLM provider.
+- Multi-MCU coverage spans all mainstream 32-bit embedded ecosystems.
+- Behavior verification goes 5 layers deep, including value-range bounds
+  on captured regex groups.
+- LLM HTTP path is resilient to transient provider failures.
+- GUI + CLI + research entrypoint + plugin-sync hook + real-board runbook
+  are all in place.
+
+The only remaining work is real-hardware end-to-end validation when a
+board arrives — operationally documented in
+`docs/REAL_BOARD_DAY_RUNBOOK.md`. No code or test work blocks that.
