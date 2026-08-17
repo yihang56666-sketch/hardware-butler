@@ -295,7 +295,7 @@ def parameter_context(*, provider: str, workspace: str | None = None, parameter_
 
 def emit_stream_record(*, source: str, channel_type: str, text: str, as_json: bool, stream_type: str = "text", channel: int | None = None, extra: dict | None = None) -> None:
     if as_json:
-        record = {
+        record: dict = {
             "timestamp": now_iso(),
             "source": source,
             "channel_type": channel_type,

@@ -185,7 +185,7 @@ def make_result(
     error: dict | None = None,
 ) -> dict:
     """统一结果格式"""
-    result = {
+    result: dict = {
         "status": "ok" if success else "error",
         "action": action,
         "summary": summary,

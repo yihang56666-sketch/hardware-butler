@@ -25,6 +25,13 @@ def copy_fixture(name: str) -> Path:
     chip_docs = target / "docs" / "chip"
     if chip_docs.exists():
         shutil.rmtree(chip_docs)
+    # Same pollution guard as test_hardware_risk: ad-hoc CLI runs against the
+    # fixture (e.g. `research --root tests/fixtures/cubemx-basic`) write into
+    # .hardware-butler/ inside the fixture, which would mask "missing manual"
+    # evidence and silently flip these assertions.
+    scratch = target / ".hardware-butler"
+    if scratch.exists():
+        shutil.rmtree(scratch)
     return target
 
 

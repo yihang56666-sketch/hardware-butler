@@ -53,10 +53,11 @@ TAB_ASK = 4
 TAB_OVERVIEW = 5
 TAB_TASKS = 6
 TAB_ACTIONS = 7
-TAB_WORKFLOW = 8
-TAB_REPORTS = 9
-TAB_TUTORIAL = 10
-TAB_OUTPUT = 11
+TAB_TOOLS = 8
+TAB_WORKFLOW = 9
+TAB_REPORTS = 10
+TAB_TUTORIAL = 11
+TAB_OUTPUT = 12
 
 
 def frozen_cli_candidates() -> list[Path]:
@@ -160,6 +161,7 @@ class HardwareButlerWindow(QMainWindow):
         self.tabs.addTab(self.overview_tab(), "总览")
         self.tabs.addTab(self.task_tab(), "任务")
         self.tabs.addTab(self.actions_tab(), "动作")
+        self.tabs.addTab(self.tools_tab(), "工具")
         self.tabs.addTab(self.workflow_tab(), "工作流")
         self.tabs.addTab(self.reports_tab(), "报告")
         self.tabs.addTab(self.tutorial_tab(), "教程")
@@ -951,6 +953,191 @@ class HardwareButlerWindow(QMainWindow):
         self.action_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         layout.addWidget(self.action_table, 1)
         return page
+
+    def tools_tab(self) -> QWidget:
+        """Surface high-value CLI commands that previously had no GUI entry.
+
+        Each row: a button + minimal inputs that build the argv for one CLI
+        command. Real-hardware actions (plan-action / execute-action) are
+        intentionally NOT here — those stay behind the Actions tab's
+        confirmation-token flow.
+        """
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 10, 0, 0)
+        layout.setSpacing(10)
+
+        hint = QLabel(
+            "工具集合：真实硬件日预检、构建日志诊断、固件计划/补丁、CubeMX 引脚建议与 .ioc 补丁。"
+            "全部只读或写入项目目录，不触碰真实硬件。"
+        )
+        hint.setObjectName("pageHint")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+
+        # Real-preflight: one-command real-board-day check.
+        pf_form = QGridLayout()
+        pf_form.setHorizontalSpacing(10)
+        pf_form.setVerticalSpacing(6)
+        self.tools_preflight_part = QLineEdit()
+        self.tools_preflight_part.setPlaceholderText("例如 STM32F407VGT6")
+        self.tools_preflight_probe = QLineEdit()
+        self.tools_preflight_probe.setPlaceholderText("可选探针，如 stlink-v3")
+        pf_form.addWidget(QLabel("芯片"), 0, 0)
+        pf_form.addWidget(self.tools_preflight_part, 0, 1)
+        pf_form.addWidget(QLabel("探针"), 1, 0)
+        pf_form.addWidget(self.tools_preflight_probe, 1, 1)
+        layout.addLayout(pf_form)
+        pf_btn = QPushButton("真实硬件日预检（real-preflight）")
+        pf_btn.clicked.connect(self.run_real_preflight)
+        layout.addWidget(pf_btn)
+        self.command_buttons.append(pf_btn)
+
+        # classify-log: diagnose a build log file.
+        cl_form = QGridLayout()
+        self.tools_log_path = QLineEdit()
+        self.tools_log_path.setPlaceholderText("构建日志文件路径")
+        cl_browse = QPushButton("浏览…")
+        cl_browse.clicked.connect(self._browse_log_path)
+        cl_form.addWidget(QLabel("日志文件"), 0, 0)
+        cl_form.addWidget(self.tools_log_path, 0, 1)
+        cl_form.addWidget(cl_browse, 0, 2)
+        layout.addLayout(cl_form)
+        cl_btn = QPushButton("诊断构建日志（classify-log）")
+        cl_btn.clicked.connect(self.run_classify_log)
+        layout.addWidget(cl_btn)
+        self.command_buttons.extend([cl_browse, cl_btn])
+
+        # Firmware plan + patch: driven by feature/pin/function/part.
+        fw_form = QGridLayout()
+        self.tools_fw_feature = QLineEdit()
+        self.tools_fw_feature.setPlaceholderText("led-blink")
+        self.tools_fw_pin = QLineEdit()
+        self.tools_fw_pin.setPlaceholderText("PD12")
+        self.tools_fw_function = QLineEdit()
+        self.tools_fw_function.setPlaceholderText("gpio-output")
+        self.tools_fw_part = QLineEdit()
+        self.tools_fw_part.setPlaceholderText("可选 STM32F407VGT6")
+        fw_form.addWidget(QLabel("功能"), 0, 0)
+        fw_form.addWidget(self.tools_fw_feature, 0, 1)
+        fw_form.addWidget(QLabel("引脚"), 1, 0)
+        fw_form.addWidget(self.tools_fw_pin, 1, 1)
+        fw_form.addWidget(QLabel("外设"), 2, 0)
+        fw_form.addWidget(self.tools_fw_function, 2, 1)
+        fw_form.addWidget(QLabel("芯片"), 3, 0)
+        fw_form.addWidget(self.tools_fw_part, 3, 1)
+        layout.addLayout(fw_form)
+        fw_row = QHBoxLayout()
+        fw_plan_btn = QPushButton("生成固件计划（firmware-plan）")
+        fw_plan_btn.clicked.connect(self.run_firmware_plan)
+        fw_patch_btn = QPushButton("生成固件补丁（firmware-patch）")
+        fw_patch_btn.clicked.connect(self.run_firmware_patch)
+        fw_row.addWidget(fw_plan_btn)
+        fw_row.addWidget(fw_patch_btn)
+        fw_row.addStretch()
+        layout.addLayout(fw_row)
+        self.command_buttons.extend([fw_plan_btn, fw_patch_btn])
+
+        # CubeMX advise-pin + patch-ioc.
+        adv_row = QHBoxLayout()
+        adv_btn = QPushButton("引脚建议（advise-pin）")
+        adv_btn.clicked.connect(self.run_advise_pin)
+        patch_ioc_btn = QPushButton(".ioc 安全补丁（patch-ioc）")
+        patch_ioc_btn.clicked.connect(self.run_patch_ioc)
+        adv_row.addWidget(adv_btn)
+        adv_row.addWidget(patch_ioc_btn)
+        adv_row.addStretch()
+        layout.addLayout(adv_row)
+        self.command_buttons.extend([adv_btn, patch_ioc_btn])
+
+        # Research: the existing "资料搜索" tab owns this flow already. The
+        # tools tab surfaces a single button that jumps the user there, so
+        # the auxiliary research path is reachable from the same surface as
+        # the rest of the CLI commands.
+        rs_btn = QPushButton("资料搜集与分析 →（切换到“资料搜索”标签）")
+        rs_btn.clicked.connect(self.jump_to_search_tab)
+        layout.addWidget(rs_btn)
+        self.command_buttons.append(rs_btn)
+
+        layout.addStretch()
+        return page
+
+    def run_real_preflight(self) -> None:
+        part = self.tools_preflight_part.text().strip()
+        if not part:
+            self.append_output("请先输入芯片型号。")
+            self.tabs.setCurrentIndex(TAB_TOOLS)
+            return
+        argv = self.cli("real-preflight", "--root", self.project_root(), "--part", part, "--json")
+        probe = self.tools_preflight_probe.text().strip()
+        if probe:
+            argv.extend(["--probe", probe])
+        self.run_command(argv)
+
+    def _browse_log_path(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, "选择构建日志", "", "Log files (*.log *.txt);;All files (*)")
+        if path:
+            self.tools_log_path.setText(path)
+
+    def run_classify_log(self) -> None:
+        log_path = self.tools_log_path.text().strip()
+        if not log_path:
+            self.append_output("请先选择或输入构建日志文件路径。")
+            self.tabs.setCurrentIndex(TAB_TOOLS)
+            return
+        self.run_command(self.cli("classify-log", "--log", log_path, "--json"))
+
+    def run_firmware_plan(self) -> None:
+        argv = self.cli("firmware-plan", "--root", self.project_root(), "--json")
+        for flag, widget in (
+            ("--feature", self.tools_fw_feature),
+            ("--pin", self.tools_fw_pin),
+            ("--function", self.tools_fw_function),
+        ):
+            value = widget.text().strip()
+            if value:
+                argv.extend([flag, value])
+        self.run_command(argv)
+
+    def run_firmware_patch(self) -> None:
+        argv = self.cli("firmware-patch", "--root", self.project_root(), "--json")
+        for flag, widget in (
+            ("--feature", self.tools_fw_feature),
+            ("--pin", self.tools_fw_pin),
+            ("--function", self.tools_fw_function),
+        ):
+            value = widget.text().strip()
+            if value:
+                argv.extend([flag, value])
+        self.run_command(argv)
+
+    def run_advise_pin(self) -> None:
+        argv = self.cli("advise-pin", "--root", self.project_root(), "--json")
+        for flag, widget in (
+            ("--pin", self.tools_fw_pin),
+            ("--function", self.tools_fw_function),
+        ):
+            value = widget.text().strip()
+            if value:
+                argv.extend([flag, value])
+        self.run_command(argv)
+
+    def run_patch_ioc(self) -> None:
+        argv = self.cli("patch-ioc", "--root", self.project_root(), "--json")
+        for flag, widget in (
+            ("--function", self.tools_fw_function),
+            ("--pin", self.tools_fw_pin),
+        ):
+            value = widget.text().strip()
+            if value:
+                argv.extend([flag, value])
+        self.run_command(argv)
+
+    def jump_to_search_tab(self) -> None:
+        """The research flow lives on the search tab; surface a button here
+        that takes the user there. Keeps a single source of truth for the
+        research form's state."""
+        self.tabs.setCurrentIndex(TAB_SEARCH)
 
     def reports_tab(self) -> QWidget:
         page = QWidget()

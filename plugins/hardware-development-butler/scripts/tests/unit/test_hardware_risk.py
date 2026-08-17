@@ -25,6 +25,13 @@ def copy_fixture(name: str) -> Path:
     chip_docs = target / "docs" / "chip"
     if chip_docs.exists():
         shutil.rmtree(chip_docs)
+    # Strip runtime scratch state too: ad-hoc CLI invocations against the
+    # fixture (e.g. `research --root tests/fixtures/cubemx-basic`) drop
+    # generated evidence under .hardware-butler/, which would then be picked
+    # up by the scanner and mask the "missing chip documents" risk.
+    scratch = target / ".hardware-butler"
+    if scratch.exists():
+        shutil.rmtree(scratch)
     return target
 
 

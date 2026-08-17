@@ -163,7 +163,7 @@ def build_action_commands(
 
 
 def parse_output(combined: str, action: str) -> dict:
-    result = {"raw": combined}
+    result: dict = {"raw": combined}
     for pattern, code, message in ERROR_PATTERNS:
         if re.search(pattern, combined, re.IGNORECASE):
             return {"error_code": code, "error_message": message, "raw": combined}

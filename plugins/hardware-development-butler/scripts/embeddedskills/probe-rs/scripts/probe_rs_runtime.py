@@ -242,7 +242,7 @@ def make_result(
     timing: dict | None = None,
     error: dict | None = None,
 ) -> dict:
-    result = {"status": status, "action": action, "summary": summary, "details": compact_dict(details)}
+    result: dict = {"status": status, "action": action, "summary": summary, "details": compact_dict(details)}
     optional = {
         "context": compact_dict(context),
         "artifacts": compact_dict(artifacts),

@@ -83,11 +83,13 @@ def wait_server_ready(proc: subprocess.Popen, telnet_port: int, timeout: int = 1
     ready = False
     while time.time() - start < timeout:
         if proc.poll() is not None:
+            assert proc.stderr is not None
             remaining = proc.stderr.read()
             for line in remaining.splitlines():
                 if "Error:" in line:
                     errors.append(line.strip())
             return False, errors
+        assert proc.stderr is not None
         line = proc.stderr.readline()
         if not line:
             time.sleep(0.1)
@@ -136,7 +138,7 @@ class TelnetConnection:
         self.host = host
         self.port = port
         self.timeout = timeout
-        self.sock = None
+        self.sock: "socket.socket | None" = None
         self._buf = b""
 
     @staticmethod
@@ -182,6 +184,7 @@ class TelnetConnection:
 
     def _read_until_prompt(self) -> str:
         """读取数据直到出现 '> ' 提示符"""
+        assert self.sock is not None
         while True:
             # 过滤 IAC 和 NUL，再解码
             clean = self._strip_iac(self._buf)
@@ -232,7 +235,7 @@ class TelnetConnection:
 
 def parse_reg_single(raw: str) -> dict:
     """解析单个寄存器查询结果: 'regname (/bits): 0xVALUE' 或 'regname 0xVALUE'"""
-    result = {}
+    result: dict = {}
     # 格式1: pc (/32): 0x080009dc
     m = re.search(r"(\w+)\s+\(/\d+\):\s*(0x[0-9a-fA-F]+)", raw)
     if m:

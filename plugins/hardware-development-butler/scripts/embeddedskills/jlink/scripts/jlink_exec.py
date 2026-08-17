@@ -87,7 +87,7 @@ def parse_pc(stdout: str) -> str:
 
 def parse_output(stdout: str, action: str) -> dict:
     """解析 JLink.exe 输出，提取关键信息"""
-    result = {"raw": stdout}
+    result: dict = {"raw": stdout}
 
     # 检查错误模式
     for pattern, code, message in ERROR_PATTERNS:
