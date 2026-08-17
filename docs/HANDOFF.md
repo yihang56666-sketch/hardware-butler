@@ -1028,3 +1028,74 @@ fallback when neither probe nor QEMU is available. One retry covers
 transient gdb/qemu port races. Unit tests cover backend selection and the
 gdb-transcript parser; the gated e2e runs the whole observe→verify chain
 for real (`test_workflow_observe_uses_qemu_backend_end_to_end`).
+
+---
+
+## 19. Autonomous Loop Regression + GUI LLM Panel + Unified Research (2026-08-17)
+
+Three maturity additions closing the gap between "scaffold" and the user's
+"one sentence → done" goal.
+
+### 19.1 Autonomous LLM loop regression test
+
+The mock-mode e2e tests run with the default `claude-code` provider, which
+never actually exercises the HTTP LLM code path (LLM stays pending). So a
+future change could silently break "one sentence → done" and no test would
+catch it. Fixed:
+
+- `tests/unit/test_workflow_autonomous_loop.py` (NEW, 2 tests) stubs
+  `llm_client.call_llm` to simulate an HTTP provider answering intent-parse
+  + codegen tasks. Runs the full 9-stage workflow with NO `--feature/--pin/
+  --part`. Asserts: (a) all stages `completed`, no `blocked-needs-input`;
+  (b) firmware-plan evidence records `llm_codegen.status == "ok"` AND the
+  LLM-written `app_led_blink.c` lands on disk with the stub's signatures
+  (proving the LLM's content, not the template, was written).
+
+This is the regression net for the core product claim: with an HTTP LLM
+provider configured, the workflow closes the loop autonomously.
+
+### 19.2 GUI LLM provider config panel
+
+The GUI workflow tab previously had no LLM provider config UI — user had
+to hand-edit `.hardware-butler/llm-config.json`. Added:
+
+- `QGroupBox` in [gui/hardware_agent_ui.py](../gui/hardware_agent_ui.py)
+  workflow tab: provider combo (claude-code/anthropic/openai/local),
+  API key env var, model, base URL, codegen toggle, save/load buttons.
+- Persistence goes through the existing `workflow-llm-config` CLI so the
+  single-source-of-truth path is preserved.
+
+### 19.3 Unified research entrypoint
+
+The auxiliary "资料搜集/分析" path was scattered across three CLI commands
+(`chip-dossier`, `summarize-manual`, `ask`). Consolidated:
+
+- [tools/research.py](../tools/research.py) (NEW) — `run_research(root,
+  part, out_dir, question)` orchestrates chip_dossier.create_dossier +
+  manual_summarizer.summarize_documents + evidence_qa.answer_question.
+  Per-stage status reporting (ok/error/skipped); overall status is
+  ok / partial / error. Network failures do not abort the whole run.
+- New `research` CLI command: `python tools/hardware_butler.py research
+  --part <chip> --question "..." --json`.
+- GUI "资料搜索" tab now has a "一键研究（下载+摘要+问答）" button +
+  question input that calls the new command.
+- Capability registered in `product_doctor.capabilities()` as
+  `auxiliary-research-entrypoint`.
+- 5 new tests in `tests/unit/test_research.py` cover empty-part, no-PDF
+  partial, happy path with PDFs + question, stage error capture, and
+  markdown render.
+
+### Verification
+
+- 483 tests pass / 4 skipped (8 new this session).
+- ruff + mypy clean on tools/ (60 files now, was 59).
+- Plugin re-synced; `test_plugin_sync.py` 129 tests pass.
+
+### What this enables for the user
+
+1. Configure LLM provider from the GUI (no JSON editing).
+2. Run `workflow-run --goal "LED blink on PD12"` (no other flags) with an
+   HTTP provider configured — workflow completes autonomously, LLM writes
+   the firmware code.
+3. Run `research --part STM32F407VGTx --question "Where is PD12?"` for the
+   ad-hoc datasheet + Q&A path without launching the full workflow.

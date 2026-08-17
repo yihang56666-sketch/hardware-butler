@@ -703,6 +703,18 @@ def main(argv: list[str] | None = None) -> None:
     summary_p.add_argument("--json", action="store_true", dest="as_json")
     summary_p.add_argument("--out", default="")
 
+    research_p = sub.add_parser(
+        "research",
+        help="One-command auxiliary research: datasheet download + manual summary + optional Q&A",
+    )
+    research_p.add_argument("--root", default=".")
+    research_p.add_argument("--part", required=True)
+    research_p.add_argument("--out-dir", default="")
+    research_p.add_argument("--question", default="", help="Optional free-form question answered against the downloaded evidence")
+    research_p.add_argument("--timeout", type=int, default=20)
+    research_p.add_argument("--json", action="store_true", dest="as_json")
+    research_p.add_argument("--out", default="")
+
     args = parser.parse_args(argv)
 
     if args.command == "guide":
@@ -1046,6 +1058,14 @@ def main(argv: list[str] | None = None) -> None:
     elif args.command == "summarize-manual":
         data = manual_summarizer.summarize_documents(args.part, [Path(item) for item in args.document])
         output(data, as_json=args.as_json, markdown=manual_summarizer.render_markdown(data), out=args.out)
+    elif args.command == "research":
+        import research  # noqa: E402
+        root = Path(args.root)
+        research_out_dir: Path | None = Path(args.out_dir) if args.out_dir else None
+        data = research.run_research(
+            root, part=args.part, out_dir=research_out_dir, question=args.question, timeout_s=args.timeout
+        )
+        output(data, as_json=args.as_json, markdown=research.render_research_markdown(data), out=args.out)
 
 def cli_entry(argv: list[str] | None = None) -> int:
     configure_stdio()

@@ -1014,3 +1014,17 @@ the generated binary boots and behaves (kernel start, tick, context
 switch, RTT write) and de-risks the real-board day, but the
 flash/observe/verify-goal loop on a physical board remains the final
 acceptance step.
+
+### QEMU is now a first-class workflow observe backend (2026-08-17)
+
+`tools/qemu_behavior_check.py` extracts the harness above into the
+workflow: when no debug probe is attached but QEMU + gdb are findable and
+the build stage produced an ELF, `debug-observe` EXECUTES the firmware and
+reads the RTT heartbeat (mode `qemu-emulated`, evidence includes
+task_symbol / wr_off / heartbeat), and `verify-goal` labels the result
+`behavior-emulated` — honest evidence one level below `behavior-real`
+(physical probe). The synthesized `behavior-mock` remains only as the last
+fallback when neither probe nor QEMU is available. One retry covers
+transient gdb/qemu port races. Unit tests cover backend selection and the
+gdb-transcript parser; the gated e2e runs the whole observe→verify chain
+for real (`test_workflow_observe_uses_qemu_backend_end_to_end`).

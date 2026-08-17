@@ -497,9 +497,16 @@ class HardwareButlerWindow(QMainWindow):
         search = QPushButton("搜索并整理资料")
         search.clicked.connect(self.run_document_search)
         controls.addWidget(search)
+        research_btn = QPushButton("一键研究（下载+摘要+问答）")
+        research_btn.clicked.connect(self.run_research)
+        controls.addWidget(research_btn)
         controls.addStretch()
         layout.addLayout(controls)
-        self.command_buttons.append(search)
+        self.command_buttons.extend([search, research_btn])
+
+        self.research_question_input = QLineEdit()
+        self.research_question_input.setPlaceholderText("可选：对下载到的资料问一个问题（留空只跑下载+摘要）")
+        layout.addWidget(self.research_question_input)
 
         help_text = QTextBrowser()
         help_text.setMaximumHeight(170)
@@ -697,6 +704,43 @@ class HardwareButlerWindow(QMainWindow):
         layout.addLayout(controls)
         self.command_buttons.extend([run_wf, resume_wf, status_wf, llm_wf])
 
+        # LLM provider config: user picks provider + api_key env + model + base_url
+        # + codegen toggle. Persists via `workflow-llm-config` CLI so the rest of
+        # the workflow reads the same .hardware-butler/llm-config.json.
+        llm_cfg_box = QGroupBox("LLM 提供方（用于意图解析 / 代码生成 / 失败分析）")
+        llm_cfg_layout = QGridLayout(llm_cfg_box)
+        llm_cfg_layout.setHorizontalSpacing(10)
+        llm_cfg_layout.setVerticalSpacing(6)
+        self.wf_llm_provider = QComboBox()
+        self.wf_llm_provider.addItems(["claude-code", "anthropic", "openai", "local"])
+        self.wf_llm_apikey_env = QLineEdit()
+        self.wf_llm_apikey_env.setPlaceholderText("环境变量名，例如 ANTHROPIC_API_KEY")
+        self.wf_llm_model = QLineEdit()
+        self.wf_llm_model.setPlaceholderText("模型 ID，例如 claude-sonnet-4-6")
+        self.wf_llm_base_url = QLineEdit()
+        self.wf_llm_base_url.setPlaceholderText("可选 base_url（local 提供方必填）")
+        self.wf_llm_codegen = QCheckBox("允许 LLM 写固件代码（app_*.c/.h）")
+        save_cfg_btn = QPushButton("保存 LLM 配置")
+        save_cfg_btn.clicked.connect(self.save_workflow_llm_config)
+        load_cfg_btn = QPushButton("读取当前配置")
+        load_cfg_btn.clicked.connect(self.load_workflow_llm_config)
+        llm_cfg_layout.addWidget(QLabel("提供方"), 0, 0)
+        llm_cfg_layout.addWidget(self.wf_llm_provider, 0, 1)
+        llm_cfg_layout.addWidget(QLabel("API Key 环境变量"), 1, 0)
+        llm_cfg_layout.addWidget(self.wf_llm_apikey_env, 1, 1)
+        llm_cfg_layout.addWidget(QLabel("模型"), 2, 0)
+        llm_cfg_layout.addWidget(self.wf_llm_model, 2, 1)
+        llm_cfg_layout.addWidget(QLabel("Base URL"), 3, 0)
+        llm_cfg_layout.addWidget(self.wf_llm_base_url, 3, 1)
+        llm_cfg_layout.addWidget(self.wf_llm_codegen, 4, 1)
+        cfg_btn_row = QHBoxLayout()
+        cfg_btn_row.addWidget(save_cfg_btn)
+        cfg_btn_row.addWidget(load_cfg_btn)
+        cfg_btn_row.addStretch()
+        llm_cfg_layout.addLayout(cfg_btn_row, 5, 1)
+        layout.addWidget(llm_cfg_box)
+        self.command_buttons.extend([save_cfg_btn, load_cfg_btn])
+
         self.wf_status_label = QLabel("尚未运行工作流。")
         self.wf_status_label.setObjectName("pageHint")
         self.wf_status_label.setWordWrap(True)
@@ -763,6 +807,52 @@ class HardwareButlerWindow(QMainWindow):
 
     def run_workflow_llm_tasks(self) -> None:
         self.run_command(self.cli("workflow-llm-tasks", "--root", self.project_root(), "--json"))
+
+    def save_workflow_llm_config(self) -> None:
+        argv = self.cli(
+            "workflow-llm-config", "--root", self.project_root(),
+            "--provider", self.wf_llm_provider.currentText().strip(),
+        )
+        api_key_env = self.wf_llm_apikey_env.text().strip()
+        if api_key_env:
+            argv.extend(["--api-key-env", api_key_env])
+        model = self.wf_llm_model.text().strip()
+        if model:
+            argv.extend(["--model", model])
+        base_url = self.wf_llm_base_url.text().strip()
+        if base_url:
+            argv.extend(["--base-url", base_url])
+        if self.wf_llm_codegen.isChecked():
+            argv.extend(["--codegen", "on"])
+        else:
+            argv.extend(["--codegen", "off"])
+        argv.append("--json")
+        self.run_command(argv)
+
+    def load_workflow_llm_config(self) -> None:
+        import json as _json
+        argv = self.cli("workflow-llm-config", "--root", self.project_root(), "--json")
+        result = subprocess.run(argv, capture_output=True, text=True, encoding="utf-8", errors="replace")
+        if result.returncode != 0:
+            self.append_output(f"读取 LLM 配置失败: {result.stderr.strip() or result.stdout.strip()}")
+            return
+        try:
+            data = _json.loads(result.stdout)
+        except ValueError:
+            self.append_output(f"LLM 配置返回非 JSON: {result.stdout[:300]}")
+            return
+        config = data.get("config", {}) if isinstance(data, dict) else {}
+        if not config:
+            return
+        provider = str(config.get("provider", "claude-code"))
+        idx = self.wf_llm_provider.findText(provider)
+        if idx >= 0:
+            self.wf_llm_provider.setCurrentIndex(idx)
+        self.wf_llm_apikey_env.setText(str(config.get("api_key_env", "")))
+        self.wf_llm_model.setText(str(config.get("model", "")))
+        self.wf_llm_base_url.setText(str(config.get("base_url", "")))
+        self.wf_llm_codegen.setChecked(bool(config.get("codegen", False)))
+        self.append_output(f"已读取 LLM 配置: provider={provider}, configured={data.get('configured', False)}")
 
     def apply_workflow_state(self, state: dict[str, Any]) -> None:
         status = str(state.get("status", ""))
@@ -998,6 +1088,20 @@ class HardwareButlerWindow(QMainWindow):
             argv.extend(["--api-provider", "exa"])
         elif provider == "通用 API":
             argv.extend(["--api-provider", "generic"])
+        self.run_command(argv)
+
+    def run_research(self) -> None:
+        part = self.part_input.text().strip()
+        if not part:
+            self.append_output("请先输入芯片或器件型号。")
+            self.tabs.setCurrentIndex(TAB_SEARCH)
+            return
+        argv = self.cli(
+            "research", "--root", self.project_root(), "--part", part, "--json",
+        )
+        question = self.research_question_input.text().strip()
+        if question:
+            argv.extend(["--question", question])
         self.run_command(argv)
 
     def run_ask(self) -> None:
