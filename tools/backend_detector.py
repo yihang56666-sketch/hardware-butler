@@ -23,8 +23,10 @@ import project_scanner
 
 # Vendor adapters register themselves on import.
 import vendor_adapters
+import vendor_adapters.avr
 import vendor_adapters.esp32
 import vendor_adapters.msp430
+import vendor_adapters.nordic
 import vendor_adapters.stm32
 
 

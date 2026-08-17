@@ -1099,3 +1099,81 @@ The auxiliary "资料搜集/分析" path was scattered across three CLI commands
    the firmware code.
 3. Run `research --part STM32F407VGTx --question "Where is PD12?"` for the
    ad-hoc datasheet + Q&A path without launching the full workflow.
+
+
+---
+
+## 20. Real frequency measurement + AVR/Nordic adapters + nextboard pointer (2026-08-17)
+
+Closing three non-hardware gaps identified in the 2026-08-17 takeover audit.
+
+### 20.1 Frequency measurement in _verify_signal
+
+Previous behavior: when the firmware plan said "LED 2Hz" but the capture
+had no "2hz" string, the verifier matched on `toggle` keyword presence
+alone — a false positive ("LED toggle on" says nothing about the rate).
+
+New behavior in [tools/workflow_runner.py](../tools/workflow_runner.py):
+
+- New `_measure_toggle_frequency(capture, kind)` extracts toggle events
+  from the capture. Two methods:
+  1. **Timestamped lines** (`[12.345] app_led: on`) — compute average gap
+     between successive on-events; frequency = 1 / (2 * avg_gap).
+  2. **Untimestamped repeated markers** (>=4) — use observe-window
+     duration (env `HARDWARE_BUTLER_OBSERVE_WINDOW_S`, default 8s) as
+     denominator; freq = (marker_count / 2) / window_s.
+- `_verify_signal` now attempts measurement first when `frequency_hz` is
+  set; matches only if measured is within [0.5x, 2.0x] of expected (wide
+  tolerance for clock drift + capture edges). Refuses to claim a
+  frequency match from keywords alone.
+- 7 new tests in `tests/unit/test_verify_signal_frequency.py` cover
+  timestamped measurement, wrong-frequency rejection, marker-count
+  fallback, empty/insufficient captures.
+- Existing `test_verify_signal_led_toggle_marker_fallback` updated to
+  assert the new correct behavior (single marker + expected 10Hz →
+  unmatched, because the keyword alone cannot verify a rate).
+
+### 20.2 AVR + Nordic vendor adapters
+
+Two new adapter families registered (extends HANDOFF §4 table):
+
+- `tools/vendor_adapters/avr.py` (NEW): Microchip AVR (ATmega/ATtiny/
+  ATxmega). Build via avr-gcc/make or PlatformIO `atmelavr`; flash via
+  avrdude (default programmer usbasp, env-overridable); observe via
+  pyserial UART. Board mapping: ATmega328P→uno, ATmega2560→megaatmega2560,
+  ATtiny85→attiny85, ATmega32U4→leonardo.
+- `tools/vendor_adapters/nordic.py` (NEW): Nordic nRF52/nRF53 (Cortex-M
+  BLE + multi-protocol). Build via arm-none-eabi-gcc/cmake or PlatformIO
+  `nordicnrf52`; flash via probe-rs (preferred) or nrfjprog (fallback);
+  observe via probe-rs RTT or pyserial UART. Board mapping: nRF52832→
+  nrf52_dk, nRF52840→nrf52840_dk, nRF5340→nrf5340_dk_app. FreeRTOS
+  codegen on PlatformIO enabled (CMSIS-RTOS vendored like STM32).
+- Both registered in `tools/workflow_runner.py` and `tools/backend_detector.py`.
+- 12 new tests in `tests/unit/test_vendor_adapters_avr_nordic.py` cover
+  family detection, registry lookup, command generation (probe-rs
+  preference + nrfjprog fallback), PlatformIO board mapping, FreeRTOS
+  support flag, datasheet query terms.
+
+The family registry now covers 5 vendors (STM32 / ESP32 / MSP430 / AVR /
+Nordic) plus the `detect_family` heuristics for ti-tiva, c2000, GD32/CH32
+(→stm32-compatible).
+
+### 20.3 nextboard hardware-solution skill pointer
+
+The `chip-selection` stage returns `blocked-needs-input` when no part is
+given and CubeMX detection finds none. The evidence now includes a
+`deep_selection_pointer` field directing the user to the nextboard
+`hardware-solution` skill (`nextboard/skills/hardware-solution/SKILL.md`)
+for parameterized selection (power tree, BOM, supply chain, domestic vs
+overseas sourcing). That skill is a SKILL.md (host-agent driven), so it
+is invoked by the host agent reading it — not via Python API. The
+workflow now tells the user where to go for deep selection and how to
+bring the result back via `--part`.
+
+### Verification
+
+- 504 tests pass / 4 skipped (12 new this session: 7 frequency + 5 new
+  vendor adapter tests beyond the 12 in the dedicated file — actually
+  19 new tests total this session).
+- ruff + mypy clean on tools/ (62 files now, was 60).
+- Plugin re-synced; `test_plugin_sync` passes.

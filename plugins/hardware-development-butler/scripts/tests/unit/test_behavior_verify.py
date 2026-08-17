@@ -97,11 +97,17 @@ def test_verify_signal_frequency_marker_not_found() -> None:
 
 
 def test_verify_signal_led_toggle_marker_fallback() -> None:
-    """When frequency not found but toggle markers present for LED, match."""
+    """A single toggle marker with no timestamps cannot verify a frequency.
+
+    Previous behavior matched on keyword presence alone — that was a false
+    positive: 'LED toggle on' says nothing about the rate. The new behavior
+    refuses to claim a frequency match without measurable toggle events.
+    Use a capture with enough repeated markers (>=4) to actually measure.
+    """
     capture = "LED PD12 toggle on"
     result = wr._verify_signal({"kind": "led", "frequency_hz": 10}, capture)
-    assert result["matched"] is True
-    assert "toggle marker" in result["reason"]
+    assert result["matched"] is False
+    assert "refusing" in result["reason"] or "not measurable" in result["reason"]
 
 
 def test_verify_signal_kind_keyword_fallback_match() -> None:

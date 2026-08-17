@@ -29,8 +29,10 @@ import llm_config
 import runtime_context
 import safe_io
 import vendor_adapters
+import vendor_adapters.avr
 import vendor_adapters.esp32
 import vendor_adapters.msp430
+import vendor_adapters.nordic
 import vendor_adapters.stm32
 from safety_gate import check_goal_token, mint_goal_token
 
@@ -542,6 +544,13 @@ def _stage_chip_selection(
                 "instruction": (
                     "re-run workflow with --part <chosen chip>"
                     + ("" if auto_select else " or --auto-select to take the first LLM candidate")
+                ),
+                "deep_selection_pointer": (
+                    "For parameterized selection (power tree, BOM, supply chain, "
+                    "domestic/overseas sourcing), invoke the nextboard hardware-solution "
+                    "skill: read nextboard/skills/hardware-solution/SKILL.md. It walks "
+                    "the full hardware architect flow and outputs a schematic-ready "
+                    "proposal; pick a chip there, then come back here with --part."
                 ),
             },
             error="no chip specified and CubeMX detection found none; LLM candidates generated — pick one",
@@ -1453,6 +1462,77 @@ def _expected_signals(firmware_plan: dict[str, Any]) -> list[dict[str, Any]]:
     return signals
 
 
+def _measure_toggle_frequency(capture: str, *, kind: str) -> float | None:
+    """Estimate the toggle frequency from an observation capture.
+
+    Recognizes two capture formats:
+    1. Timestamped lines: ``[12.345] app_led: on`` — extract timestamps of
+       successive ``on`` (or ``off``) markers and compute the period.
+    2. Untimestamped repeated markers: ``app_led_blink: on`` appearing N times
+       — use the observe-window duration (from env or default 8s) as the
+       denominator: freq = (toggle_count / 2) / window_s. The /2 accounts for
+       one full period needing two toggles (on→off→on).
+
+    Returns None when there are too few toggle events to estimate a frequency
+    (need at least 2 transitions for method 1, at least 4 markers for method 2).
+    The function never raises.
+    """
+    if not capture:
+        return None
+
+    import re
+
+    ts_pattern = re.compile(r"^\s*\[?(\d+(?:\.\d+)?)\]?\s*(.*)$")
+
+    on_markers = ("on", "toggle on", "high", "1")
+    if kind == "led":
+        event_marker = "on"
+    elif kind == "uart":
+        event_marker = "tx"
+    elif kind == "rtt":
+        event_marker = "on"
+    elif kind == "swo":
+        event_marker = "itm"
+    else:
+        event_marker = "on"
+
+    # Method 1: timestamped events
+    timestamps: list[float] = []
+    for line in capture.splitlines():
+        match = ts_pattern.match(line)
+        if not match:
+            continue
+        try:
+            ts = float(match.group(1))
+        except ValueError:
+            continue
+        rest = match.group(2).lower()
+        if event_marker in rest or any(m in rest for m in on_markers if m in ("on", "toggle on")):
+            timestamps.append(ts)
+    if len(timestamps) >= 2:
+        # Period = average gap between successive events.
+        # Frequency = 1 / period. But each event is a half-period (on→off→on
+        # = one full cycle = 2 events), so freq = 1 / (2 * avg_gap).
+        gaps = [timestamps[i + 1] - timestamps[i] for i in range(len(timestamps) - 1)]
+        avg_gap = sum(gaps) / len(gaps)
+        if avg_gap <= 0:
+            return None
+        return 1.0 / (2.0 * avg_gap)
+
+    # Method 2: count repeated markers, divide by observe window
+    marker_count = 0
+    for line in capture.splitlines():
+        lowered = line.lower()
+        if event_marker in lowered or "toggle" in lowered:
+            marker_count += 1
+    if marker_count < 4:
+        return None
+    window_s = _observe_window_s()
+    # Each toggle is a half-period; full cycles = marker_count / 2.
+    cycles = marker_count / 2.0
+    return cycles / window_s
+
+
 def _verify_signal(expected: dict[str, Any], observed_capture: str) -> dict[str, Any]:
     """Check whether observed_capture contains evidence of the expected signal.
 
@@ -1490,23 +1570,50 @@ def _verify_signal(expected: dict[str, Any], observed_capture: str) -> dict[str,
 
     # Path 2: frequency marker
     if freq_hz and freq_hz > 0:
+        # First try to MEASURE the actual toggle frequency from the capture.
+        # If the capture carries timestamps or repeated toggle markers, count
+        # them over the observation window — this is real behavioral evidence,
+        # not a string match.
+        measured = _measure_toggle_frequency(observed_capture, kind=kind)
+        if measured is not None:
+            # Allow ±50% tolerance: a 2Hz signal captured for 8s should give
+            # 12-20 toggles; MCU clock drift + capture window edges justify a
+            # wide band. The point is to PROVE the signal is oscillating at
+            # the right order of magnitude, not to nail the exact rate.
+            lower = freq_hz * 0.5
+            upper = freq_hz * 2.0
+            if lower <= measured <= upper:
+                return {
+                    "matched": True,
+                    "reason": f"measured toggle frequency ~{measured:.2f}Hz within [{lower:.1f}, {upper:.1f}]Hz of expected {freq_hz}Hz",
+                    "evidence_snippet": observed_capture[:200],
+                    "measured_frequency_hz": round(measured, 3),
+                }
+            return {
+                "matched": False,
+                "reason": f"measured ~{measured:.2f}Hz outside [{lower:.1f}, {upper:.1f}]Hz of expected {freq_hz}Hz",
+                "evidence_snippet": observed_capture[:200],
+                "measured_frequency_hz": round(measured, 3),
+            }
+        # No measurable toggle events — fall back to frequency-marker string
+        # match (only honest when the firmware itself prints "2hz" in-band).
         freq_str = f"{freq_hz}hz"
         if freq_str in capture_lower or f"{freq_hz} hz" in capture_lower:
             return {
                 "matched": True,
-                "reason": f"frequency marker {freq_str} found in capture",
+                "reason": f"frequency marker {freq_str} found in capture (no timestamps to measure)",
                 "evidence_snippet": observed_capture[:200],
             }
         toggle_markers = ("toggle", "blink", "toggle on", "toggle off", "on", "off")
         if any(marker in capture_lower for marker in toggle_markers) and kind in ("led",):
             return {
-                "matched": True,
-                "reason": f"toggle marker found for {kind} signal (frequency not verified)",
+                "matched": False,
+                "reason": f"toggle markers present but no timestamps to verify {freq_str}; refusing to claim frequency match from keywords alone",
                 "evidence_snippet": observed_capture[:200],
             }
         return {
             "matched": False,
-            "reason": f"frequency {freq_str} not found in capture",
+            "reason": f"frequency {freq_str} not measurable from capture",
             "evidence_snippet": observed_capture[:200],
         }
 
