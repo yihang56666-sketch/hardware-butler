@@ -298,8 +298,8 @@ def detect_family(part: str) -> str:
     """Heuristic: map a chip part number to its vendor family.
 
     STM32xx → stm32, ESP32-xx → esp32, MSP430-xx → msp430, LM4F/TM4C → ti-tiva,
-    TMS320 → c2000, ATmega/ATtiny → avr, CH32/GD32 → riscv (if RISC-V core)
-    or stm32-compatible (if Cortex-M). Conservative: unknown → "".
+    TMS320 → c2000, ATmega/ATtiny → avr, CH32V/GD32V → riscv (RISC-V core),
+    GD32/CH32 (non-V) → stm32-compatible (Cortex-M). Conservative: unknown → "".
     """
     p = part.upper()
     if p.startswith("STM32"):
@@ -310,13 +310,17 @@ def detect_family(part: str) -> str:
         return "msp430"
     if p.startswith(("TM4C", "LM4F", "CC2538", "CC2650", "CC2640")):
         return "ti-tiva"
-    if p.startswith(("TMS320", "F280")):
+    if p.startswith(("TMS320", "F280", "F282", "F283", "F28M")):
         return "c2000"
     if p.startswith(("ATMEGA", "ATTINY", "ATXMEGA")):
         return "avr"
+    # RISC-V variants: CH32Vxxx (WCH) and GD32VFxxx (GigaDevice). The trailing
+    # V distinguishes them from the Cortex-M CH32/GD32 lines.
+    if p.startswith("CH32V") or p.startswith("GD32V"):
+        return "riscv"
     if p.startswith("GD32") or p.startswith("CH32"):
-        # GD32/CH32 Cortex-M variants act like STM32; RISC-V variants differ
-        # but detection by part number alone is unreliable. Default to stm32.
+        # GD32/CH32 Cortex-M variants act like STM32; detection by part number
+        # alone is otherwise unreliable. Default to stm32.
         return "stm32"
     if p.startswith("NRF5"):
         return "nordic"

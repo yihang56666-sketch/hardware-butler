@@ -9,21 +9,37 @@ Two execution modes:
 
 2. anthropic/openai/local providers: real HTTP calls via urllib. Requires the
    user to configure api_key_env + model in llm-config.json.
+
+HTTP hardening: transient failures (connection reset, 429, 500, 502, 503, 504)
+are retried up to 3 times with exponential backoff (0.5s, 1s, 2s) plus a small
+jitter. 4xx errors other than 429 are NOT retried (they are caller-side
+mistakes — bad model, malformed prompt, auth). Each call surfaces a structured
+``error_kind`` field: ``transient`` (retryable) or ``fatal`` (not retryable).
 """
 
 from __future__ import annotations
 
 import json
+import random
 import time
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import llm_config
 
 TASKS_FILE = "llm-tasks.jsonl"
 RESPONSES_FILE = "llm-responses.jsonl"
+
+# Retry policy: 3 attempts (1 initial + 2 retries) with exponential backoff.
+MAX_ATTEMPTS = 3
+INITIAL_BACKOFF_S = 0.5
+BACKOFF_MULTIPLIER = 2.0
+JITTER_S = 0.15
+
+# HTTP status codes considered transient (retryable).
+RETRYABLE_STATUSES = {408, 429, 500, 502, 503, 504}
 
 
 def _tasks_path(root: Path) -> Path:
@@ -56,6 +72,19 @@ def _read_response(root: Path, task_id: str, *, max_wait_s: int = 0) -> dict[str
         if time.time() >= deadline or max_wait_s <= 0:
             return None
         time.sleep(0.2)
+
+
+def _classify_http_error(exc: BaseException) -> str:
+    """Return 'transient' for retryable HTTP errors, 'fatal' otherwise."""
+    if isinstance(exc, urllib.error.HTTPError):
+        return "transient" if exc.code in RETRYABLE_STATUSES else "fatal"
+    # URLError covers connection reset, DNS, timeout — all retryable.
+    if isinstance(exc, urllib.error.URLError):
+        return "transient"
+    # TimeoutError / OSError from socket reads are also retryable.
+    if isinstance(exc, (TimeoutError, ConnectionError, OSError)):
+        return "transient"
+    return "fatal"
 
 
 def _http_call_anthropic(config: llm_config.LLMConfig, prompt: str, system: str = "", max_tokens: int | None = None) -> str:
@@ -119,6 +148,37 @@ def _http_call_openai(config: llm_config.LLMConfig, prompt: str, system: str = "
     return ""
 
 
+def _call_with_retry(
+    fn: Callable[[], str],
+) -> tuple[str, dict[str, Any]]:
+    """Run an HTTP LLM call with bounded retries on transient failures.
+
+    Returns ``(text, meta)`` where ``meta`` carries ``attempts``, ``error_kind``,
+    and ``last_error``. On final failure, raises the last exception so the
+    caller can classify it.
+    """
+    backoff = INITIAL_BACKOFF_S
+    last_exc: BaseException | None = None
+    last_kind = "fatal"
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        try:
+            text = fn()
+            return text, {"attempts": attempt, "error_kind": None, "last_error": None}
+        except Exception as exc:  # noqa: BLE001
+            last_exc = exc
+            last_kind = _classify_http_error(exc)
+            if last_kind == "fatal" or attempt == MAX_ATTEMPTS:
+                # Non-retryable, or out of retries — surface to caller.
+                raise
+            # Transient: sleep with jitter and retry.
+            sleep_s = backoff + random.uniform(0, JITTER_S)  # noqa: S311
+            time.sleep(sleep_s)
+            backoff *= BACKOFF_MULTIPLIER
+    # Unreachable — the loop above either returns or raises.
+    assert last_exc is not None
+    raise last_exc
+
+
 def call_llm(
     root: Path,
     config: llm_config.LLMConfig,
@@ -134,6 +194,10 @@ def call_llm(
     agent must execute it and write the response, then the caller can poll
     via read_response or re-run the stage. max_tokens overrides the config
     value for HTTP providers (codegen needs far more than the 1024 default).
+
+    HTTP providers retry transient failures (429 / 5xx / connection errors)
+    up to MAX_ATTEMPTS with exponential backoff. On final failure the returned
+    error dict carries ``error_kind`` ("transient" or "fatal") and ``attempts``.
     """
     if config.provider == "claude-code":
         task = {
@@ -152,16 +216,28 @@ def call_llm(
         return {"status": "pending", "text": ""}
     try:
         if config.provider == "anthropic":
-            text = _http_call_anthropic(config, prompt, system, max_tokens=max_tokens)
-        elif config.provider == "openai":
-            text = _http_call_openai(config, prompt, system, max_tokens=max_tokens)
-        elif config.provider == "local":
-            text = _http_call_openai(config, prompt, system, max_tokens=max_tokens)
+            text, meta = _call_with_retry(
+                lambda: _http_call_anthropic(config, prompt, system, max_tokens=max_tokens)
+            )
+        elif config.provider in ("openai", "local"):
+            text, meta = _call_with_retry(
+                lambda: _http_call_openai(config, prompt, system, max_tokens=max_tokens)
+            )
         else:
             return {"status": "error", "text": "", "error": f"unknown provider: {config.provider}"}
-        return {"status": "ok", "text": text}
-    except (urllib.error.URLError, RuntimeError, ValueError) as exc:
-        return {"status": "error", "text": "", "error": str(exc)}
+        result: dict[str, Any] = {"status": "ok", "text": text}
+        # Surface retry metadata when retries actually happened.
+        if meta.get("attempts", 1) > 1:
+            result["attempts"] = meta["attempts"]
+        return result
+    except (urllib.error.URLError, urllib.error.HTTPError, RuntimeError, ValueError, TimeoutError, ConnectionError, OSError) as exc:
+        return {
+            "status": "error",
+            "text": "",
+            "error": str(exc),
+            "error_kind": _classify_http_error(exc),
+            "attempts": MAX_ATTEMPTS,
+        }
 
 
 def read_response(root: Path, task_id: str) -> dict[str, Any] | None:

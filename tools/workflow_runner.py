@@ -30,10 +30,13 @@ import runtime_context
 import safe_io
 import vendor_adapters
 import vendor_adapters.avr
+import vendor_adapters.c2000
 import vendor_adapters.esp32
 import vendor_adapters.msp430
 import vendor_adapters.nordic
+import vendor_adapters.riscv
 import vendor_adapters.stm32
+import vendor_adapters.tiva
 from safety_gate import check_goal_token, mint_goal_token
 
 STATE_DIR = ".hardware-butler"
