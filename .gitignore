@@ -50,3 +50,11 @@ plugins/hardware-development-butler/scripts/tests/tmp/
 .venv/
 .platformio/
 platformio.ini
+
+# Editor / agent scratch files
+.dsh-file-claim/
+.dsh-vision-toolkit/
+.tmp/
+.tmp-mypy-out.txt
+*.tmp
+
