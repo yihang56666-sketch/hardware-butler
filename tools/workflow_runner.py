@@ -24,6 +24,7 @@ import cube_detect
 import cubemx_config_advisor
 import firmware_code_patcher
 import firmware_intent_planner
+import hardware_action_executor
 import llm_client
 import llm_config
 import runtime_context
@@ -1364,6 +1365,27 @@ def _stage_flash(
             # Record warnings in evidence but proceed — the user opted in
             # to real flash and the values are physically plausible.
             flash_result.setdefault("value_safety", value_check)
+        if status == "completed":
+            # Defense-in-depth #2: re-verify artifact hash before real flash.
+            # An agent that tampered with state["context"]["elf"] between
+            # plan_action and flash would otherwise flash an unconfirmed
+            # binary. verify_artifact_hash returns blocked-* if the artifact
+            # is missing or its sha256 no longer matches the plan.
+            artifact_record = {
+                "artifact": state.get("context", {}).get("elf", "") or "build/firmware.elf",
+                "artifact_hash": plan.get("artifact_hash", ""),
+            }
+            if artifact_record["artifact_hash"]:
+                artifact_check = hardware_action_executor.verify_artifact_hash(
+                    artifact_record, root=root
+                )
+                if str(artifact_check.get("status", "")).startswith("blocked"):
+                    status = "failed"
+                    flash_result = {
+                        "status": "error",
+                        "stderr": f"artifact-hash blocked real flash: {artifact_check.get('message', '')}",
+                        "artifact_check": artifact_check,
+                    }
         if status == "completed":
             adapter = _get_vendor_adapter(state)
             if adapter:

@@ -16,7 +16,7 @@ from __future__ import annotations
 import shutil
 from typing import Any
 
-from vendor_adapters import VendorAdapter, register_adapter
+from vendor_adapters import VendorAdapter, _segger_jlink, register_adapter
 
 
 class NordicAdapter(VendorAdapter):
@@ -37,7 +37,7 @@ class NordicAdapter(VendorAdapter):
             "probe-rs": bool(shutil.which("probe-rs")),
             "pyocd": bool(shutil.which("pyocd")),
             "nrfjprog": bool(shutil.which("nrfjprog")),
-            "JLinkExe": bool(shutil.which("JLinkExe")),
+            "JLinkExe": bool(_segger_jlink()),
             "cmake": bool(shutil.which("cmake")),
             "ninja": bool(shutil.which("ninja")),
         }
