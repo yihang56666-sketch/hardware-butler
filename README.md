@@ -1,12 +1,12 @@
 # Hardware Butler
 
-[![CI](https://github.com/yihang56666-sketch/NextBoard/actions/workflows/ci.yml/badge.svg)](https://github.com/yihang56666-sketch/NextBoard/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Tests](https://img.shields.io/badge/tests-832%20passed-brightgreen)](#verification)
 
-A safety-first embedded hardware copilot that turns board evidence, CubeMX projects, firmware plans, and bench bring-up into clear, gated next steps.
+**一个自动化程度高的嵌入式开发助手** — 你说"在 PD12 上让 LED 以 2Hz 闪烁"，它从这一句话开始，自动完成选芯片 → 拉资料 → 配 CubeMX → LLM 写固件代码 → 编译 → 烧录 → 调试观测 → 验证目标 → 失败则自我迭代，直到完成。
 
-这是一个面向嵌入式硬件开发的工作区容器，不是单一固件工程。它把项目扫描、CubeMX/构建识别、芯片资料整理、固件补丁规划、台架预检和安全门控放在同一个工作流里。
+这是一个面向嵌入式硬件开发的工作区容器，不是单一固件工程。它把项目扫描、CubeMX/构建识别、芯片资料整理、固件代码生成、台架预检、安全门控和 LLM 自主迭代放在同一个 9 阶段工作流里。
 
 目标不是一上来就替你烧录板子，而是先安全地回答三个问题：
 
@@ -14,13 +14,23 @@ A safety-first embedded hardware copilot that turns board evidence, CubeMX proje
 2. 现在可以安全做什么？
 3. 下一步如果要碰真实硬件，需要哪些证据和确认？
 
+**核心能力**：
+- **一句话需求 → 完整工程**：9 阶段 autonomous workflow（requirement-parse → chip-selection → datasheet-collect → cubemx-config → firmware-plan → build → flash → debug-observe → verify-goal）+ optimize-loop 自我迭代（最多 3 轮）
+- **14 个 MCU 厂商族覆盖**所有主流 32-bit ISA（Cortex-M0+/M3/M4F/M7/M23/M33、RISC-V、C28x、MIPS、Xtensa、AVR、Renesas CISC、MSP430 16-bit）
+- **5 层行为验证**（kind-keyword / 频率测量 / expected_text / expected_regex / value-range bounds）
+- **LLM client**（4 种 provider：claude-code host-agent / anthropic / openai / local，含 HTTP 重试加固）
+- **三层安全门控**（env-var opt-in + confirmation token + value-sanity + artifact_hash 验证）
+- **PyQt6 GUI** 12 个 tab + CLI 36+ 子命令
+- **资料搜集整合**（datasheet 下载 → PDF 摘要 → 自由问答）
+- **无板可用**：默认 mock 模式完整跑通 9 阶段；QEMU observe backend 提供行为仿真
+
 ## Start Here
 
 推荐以源码工作区方式使用：
 
 ```powershell
-git clone https://github.com/yihang56666-sketch/NextBoard.git
-cd NextBoard
+git clone https://github.com/yihang56666-sketch/hardware-butler.git
+cd hardware-butler
 python -m pip install -e .
 ```
 
