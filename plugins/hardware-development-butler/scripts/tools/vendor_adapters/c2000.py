@@ -21,6 +21,8 @@ from typing import Any
 
 from vendor_adapters import VendorAdapter, register_adapter
 
+from . import serial_monitor_command
+
 
 class C2000Adapter(VendorAdapter):
     def __init__(self) -> None:
@@ -54,8 +56,8 @@ class C2000Adapter(VendorAdapter):
         project_root = ctx.get("project_root", ".")
         if shutil.which("make"):
             return ["make", "-C", str(project_root)]
-        if shutil.which("cl2000"):
-            return ["cl2000", "--version"]
+        # A bare `cl2000 --version` probe is not a build; report no toolchain.
+        return []
         return []
 
     def flash_command(self, ctx: dict[str, Any]) -> list[str]:
@@ -76,7 +78,7 @@ class C2000Adapter(VendorAdapter):
         port = ctx.get("port", "")
         baud = ctx.get("baud", "115200")
         if port:
-            return ["python", "-m", "serial.tools.miniterm", port, baud]
+            return serial_monitor_command(port, baud)
         return []
 
     def datasheet_queries(self, part: str) -> list[str]:

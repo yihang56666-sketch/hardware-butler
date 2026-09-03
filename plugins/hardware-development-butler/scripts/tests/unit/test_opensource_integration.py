@@ -363,14 +363,14 @@ def test_observe_via_pyserial_with_port() -> None:
     adapter = vendor_adapters.get_adapter("esp32")
     assert adapter is not None
     cmd = adapter.observe_via_pyserial({"port": "COM5", "baud": "460800"})
-    assert cmd == ["python", "-m", "serial.tools.miniterm", "COM5", "460800"]
+    assert cmd == [sys.executable, "-m", "serial.tools.miniterm", "COM5", "460800"]
 
 
 def test_observe_via_pyserial_default_baud() -> None:
     adapter = vendor_adapters.get_adapter("stm32")
     assert adapter is not None
     cmd = adapter.observe_via_pyserial({"port": "COM3"})
-    assert cmd == ["python", "-m", "serial.tools.miniterm", "COM3", "115200"]
+    assert cmd == [sys.executable, "-m", "serial.tools.miniterm", "COM3", "115200"]
 
 
 # --- platformio_board mapping ---

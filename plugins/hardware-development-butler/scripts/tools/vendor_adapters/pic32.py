@@ -19,6 +19,8 @@ from typing import Any
 
 from vendor_adapters import VendorAdapter, register_adapter
 
+from . import serial_monitor_command
+
 
 class PIC32Adapter(VendorAdapter):
     def __init__(self) -> None:
@@ -59,7 +61,8 @@ class PIC32Adapter(VendorAdapter):
         project_root = ctx.get("project_root", ".")
         if shutil.which("make"):
             return ["make", "-C", str(project_root)]
-        return ["xc32-gcc", "--version"]
+        # A bare `xc32-gcc --version` probe is not a build; report no toolchain.
+        return []
 
     def flash_command(self, ctx: dict[str, Any]) -> list[str]:
         elf = ctx.get("elf", "firmware.hex")
@@ -88,7 +91,7 @@ class PIC32Adapter(VendorAdapter):
         port = ctx.get("port", "")
         baud = ctx.get("baud", "115200")
         if port:
-            return ["python", "-m", "serial.tools.miniterm", port, baud]
+            return serial_monitor_command(port, baud)
         return []
 
     def datasheet_queries(self, part: str) -> list[str]:

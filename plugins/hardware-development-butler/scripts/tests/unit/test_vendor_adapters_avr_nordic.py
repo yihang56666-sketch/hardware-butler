@@ -131,14 +131,15 @@ def test_avr_build_command_uses_make_when_present() -> None:
     assert cmd == ["make", "-C", "/proj"]
 
 
-def test_avr_build_command_falls_back_to_gcc_version_when_no_make() -> None:
+def test_avr_build_command_reports_no_toolchain_when_no_make() -> None:
     from unittest.mock import patch
 
     adapter = vendor_adapters.get_adapter("avr")
     assert adapter is not None
     with patch("vendor_adapters.avr.shutil.which", return_value=""):
         cmd = adapter.build_command({"project_root": "/proj"})
-    assert cmd == ["avr-gcc", "--version"]
+    # A bare `avr-gcc --version` probe is not a build; report no toolchain.
+    assert cmd == []
 
 
 def test_nordic_build_command_prefers_cmake_ninja() -> None:
@@ -154,14 +155,15 @@ def test_nordic_build_command_prefers_cmake_ninja() -> None:
     assert cmd == ["cmake", "--build", "/proj"]
 
 
-def test_nordic_build_command_falls_back_to_gcc_version() -> None:
+def test_nordic_build_command_reports_no_toolchain_when_no_cmake_make() -> None:
     from unittest.mock import patch
 
     adapter = vendor_adapters.get_adapter("nordic")
     assert adapter is not None
     with patch("vendor_adapters.nordic.shutil.which", return_value=""):
         cmd = adapter.build_command({"project_root": "/proj"})
-    assert cmd == ["arm-none-eabi-gcc", "--version"]
+    # A bare `arm-none-eabi-gcc --version` probe is not a build.
+    assert cmd == []
 
 
 # --- observe_command paths ---
@@ -172,7 +174,7 @@ def test_avr_observe_command_requires_port() -> None:
     assert adapter is not None
     assert adapter.observe_command({}) == []
     cmd = adapter.observe_command({"port": "/dev/ttyUSB0", "baud": "115200"})
-    assert cmd[0] == "python"
+    assert cmd[0] == sys.executable
     assert "/dev/ttyUSB0" in cmd
     assert "115200" in cmd
 
@@ -196,7 +198,7 @@ def test_nordic_observe_command_falls_back_to_uart() -> None:
     assert adapter is not None
     with patch("vendor_adapters.nordic.shutil.which", return_value=""):
         cmd = adapter.observe_command({"port": "/dev/ttyACM0"})
-    assert cmd[0] == "python"
+    assert cmd[0] == sys.executable
     assert "/dev/ttyACM0" in cmd
 
 

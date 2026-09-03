@@ -51,12 +51,12 @@ def test_ra_build_command_uses_make_when_present() -> None:
     assert cmd == ["make", "-C", "/proj"]
 
 
-def test_ra_build_command_falls_back_to_gcc_version() -> None:
+def test_ra_build_command_reports_no_toolchain_without_make() -> None:
     adapter = vendor_adapters.get_adapter("ra")
     assert adapter is not None
     with patch("vendor_adapters.ra.shutil.which", return_value=""):
         cmd = adapter.build_command({"project_root": "/proj"})
-    assert cmd == ["arm-none-eabi-gcc", "--version"]
+    assert cmd == []
 
 
 def test_ra_flash_command_prefers_jlink() -> None:
@@ -120,20 +120,21 @@ def test_ra_observe_falls_back_to_uart() -> None:
     assert adapter is not None
     with patch("vendor_adapters.ra.shutil.which", return_value=""):
         cmd = adapter.observe_command({"port": "/dev/ttyUSB0"})
-    assert cmd[0] == "python"
+    assert cmd[0] == sys.executable
     assert "/dev/ttyUSB0" in cmd
 
 
 def test_ra_platformio_board_mapping() -> None:
     adapter = vendor_adapters.get_adapter("ra")
     assert adapter is not None
-    assert adapter.platformio_board("RA4M1") == "uno_r4"
-    # RA4M2/RA4M3 have no stock PlatformIO board matching their memory map;
-    # fall back to uno_r4 (RA4M1) rather than wrong portenta_c33 (RA6M5).
-    assert adapter.platformio_board("RA4M2") == "uno_r4"
-    assert adapter.platformio_board("RA4M3") == "uno_r4"
-    assert adapter.platformio_board("RA6M3") == "ra6m3_ek"
-    assert adapter.platformio_board("RA6M5") == "ra6m5_ek"
+    # The official renesas-ra registry only ships the Uno R4 boards (RA4M1).
+    assert adapter.platformio_board("RA4M1") == "uno_r4_minima"
+    # EK-RA ids (ra6m2_ek etc.) are TinyUSB names PlatformIO cannot resolve;
+    # everything else opts out -> native make/gcc build path.
+    assert adapter.platformio_board("RA4M2") == ""
+    assert adapter.platformio_board("RA4M3") == ""
+    assert adapter.platformio_board("RA6M3") == ""
+    assert adapter.platformio_board("RA6M5") == ""
 
 
 def test_ra_supports_freertos_on_platformio() -> None:
@@ -255,7 +256,7 @@ def test_lpc_observe_falls_back_to_uart() -> None:
     assert adapter is not None
     with patch("vendor_adapters.lpc.shutil.which", return_value=""):
         cmd = adapter.observe_command({"port": "/dev/ttyACM0"})
-    assert cmd[0] == "python"
+    assert cmd[0] == sys.executable
     assert "/dev/ttyACM0" in cmd
 
 
@@ -316,12 +317,12 @@ def test_pic32_build_command_uses_make_when_present() -> None:
     assert cmd == ["make", "-C", "/proj"]
 
 
-def test_pic32_build_command_falls_back_to_xc32_version() -> None:
+def test_pic32_build_command_reports_no_toolchain_without_make() -> None:
     adapter = vendor_adapters.get_adapter("pic32")
     assert adapter is not None
     with patch("vendor_adapters.pic32.shutil.which", side_effect=lambda n: "/usr/bin/xc32-gcc" if n == "xc32-gcc" else ""):
         cmd = adapter.build_command({"project_root": "/proj"})
-    assert cmd == ["xc32-gcc", "--version"]
+    assert cmd == []
 
 
 def test_pic32_flash_command_prefers_pic32prog() -> None:
@@ -364,7 +365,7 @@ def test_pic32_observe_command_requires_port() -> None:
     assert adapter is not None
     assert adapter.observe_command({}) == []
     cmd = adapter.observe_command({"port": "/dev/ttyUSB0", "baud": "115200"})
-    assert cmd[0] == "python"
+    assert cmd[0] == sys.executable
     assert "/dev/ttyUSB0" in cmd
 
 

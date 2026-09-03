@@ -17,6 +17,8 @@ from typing import Any
 
 from vendor_adapters import VendorAdapter, _segger_jlink, register_adapter
 
+from . import jlink_flash_command, serial_monitor_command
+
 
 class STM32Adapter(VendorAdapter):
     def __init__(self) -> None:
@@ -112,9 +114,11 @@ class STM32Adapter(VendorAdapter):
         if tool == "openocd":
             args = ["openocd", "-f", "interface/stlink.cfg", "-c", f"program {elf} reset exit"]
             return args
-        if tool == "JLink.exe":
-            args = ["JLink.exe", "-device", target or "STM32F407VG", "-if", "SWD", "-speed", "4000"]
-            return args
+        if tool in ("JLink.exe", "JLinkExe"):
+            # 裸交互式 J-Link 只会挂起直到超时且烧不进任何镜像。
+            if not target:
+                return []
+            return jlink_flash_command(tool, target=target, elf=elf)
         if tool == "st-flash":
             return ["st-flash", "write", elf, "0x08000000"]
         return []
@@ -123,7 +127,7 @@ class STM32Adapter(VendorAdapter):
         port = ctx.get("port", "")
         baud = ctx.get("baud", "115200")
         if port:
-            return ["python", "-m", "serial.tools.miniterm", port, baud]
+            return serial_monitor_command(port, baud)
         return []
 
     def datasheet_queries(self, part: str) -> list[str]:

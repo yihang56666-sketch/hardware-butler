@@ -20,6 +20,8 @@ from typing import Any
 
 from vendor_adapters import VendorAdapter, register_adapter
 
+from . import serial_monitor_command
+
 
 class RISCVAdapter(VendorAdapter):
     def __init__(self) -> None:
@@ -66,7 +68,10 @@ class RISCVAdapter(VendorAdapter):
         project_root = ctx.get("project_root", ".")
         if shutil.which("make"):
             return ["make", "-C", str(project_root)]
-        return [self._pick_gcc(), "--version"]
+        # A bare `gcc --version` probe used to be returned here; the runner
+        # counted its rc 0 as a completed build and the flash stage then
+        # chased a nonexistent artifact. Report "no build tool" instead.
+        return []
 
     def flash_command(self, ctx: dict[str, Any]) -> list[str]:
         elf = ctx.get("elf", "firmware.hex")
@@ -82,7 +87,7 @@ class RISCVAdapter(VendorAdapter):
         port = ctx.get("port", "")
         baud = ctx.get("baud", "115200")
         if port:
-            return ["python", "-m", "serial.tools.miniterm", port, baud]
+            return serial_monitor_command(port, baud)
         return []
 
     def datasheet_queries(self, part: str) -> list[str]:
@@ -95,30 +100,27 @@ class RISCVAdapter(VendorAdapter):
         ]
 
     def platformio_board(self, part: str) -> str:
-        """Map RISC-V part to PlatformIO board id (wch-riscv platform)."""
-        p = part.upper()
-        if "CH32V103" in p:
-            return "ch32v103"
-        if "CH32V203" in p:
-            return "ch32v203"
-        if "CH32V307" in p:
-            return "ch32v307"
-        if "GD32VF103" in p:
-            return "sipeed-longan-nano"
-        return "ch32v103"
+        """Map RISC-V part to PlatformIO board id.
+
+        There is no stock `platform = wch-riscv` in PlatformIO: CH32V parts
+        are only reachable through the community platform referenced by git
+        URL (Community-PIO-CH32V/platform-ch32v) with its own framework
+        naming, and GD32V boards live under the separate sipeed gd32v
+        platform — neither can be rendered as a plain `platform = <name>`
+        ini here. Return "" so builds fall back to the adapter's native
+        make + riscv-none-elf-gcc path instead of a guaranteed failure."""
+        return ""
 
     def _platformio_platform(self) -> str:
-        return "wch-riscv"
+        return ""
 
     def _platformio_framework(self) -> str:
-        return "hal"
+        return ""
 
     def supports_freertos_on_platformio(self) -> bool:
-        # WCH's PlatformIO build supports FreeRTOS via the hal framework on
-        # CH32V307; smaller parts lack the SRAM. Conservative: report True
-        # because the workflow's optimize-loop will fall back to bare-metal
-        # when FreeRTOS codegen fails to compile.
-        return True
+        # PlatformIO is disabled for this family (see platformio_board);
+        # FreeRTOS codegen on RISC-V goes through the native build path.
+        return False
 
 
 register_adapter(RISCVAdapter())

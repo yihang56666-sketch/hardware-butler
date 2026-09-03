@@ -47,12 +47,13 @@ def test_max32_build_command_uses_make_when_present() -> None:
     assert cmd == ["make", "-C", "/proj"]
 
 
-def test_max32_build_command_falls_back_to_gcc_version() -> None:
+def test_max32_build_command_reports_no_toolchain_without_make() -> None:
     adapter = vendor_adapters.get_adapter("max32")
     assert adapter is not None
     with patch("vendor_adapters.max32.shutil.which", return_value=""):
         cmd = adapter.build_command({"project_root": "/proj"})
-    assert cmd == ["arm-none-eabi-gcc", "--version"]
+    # A bare `gcc --version` probe would be counted as a successful build.
+    assert cmd == []
 
 
 def test_max32_flash_command_prefers_openocd() -> None:
@@ -117,16 +118,18 @@ def test_max32_observe_falls_back_to_uart() -> None:
     assert adapter is not None
     with patch("vendor_adapters.max32.shutil.which", return_value=""):
         cmd = adapter.observe_command({"port": "/dev/ttyUSB0"})
-    assert cmd[0] == "python"
+    assert cmd[0] == sys.executable
 
 
 def test_max32_platformio_board_mapping() -> None:
     adapter = vendor_adapters.get_adapter("max32")
     assert adapter is not None
-    assert adapter.platformio_board("MAX32660") == "max32660evsys"
-    assert adapter.platformio_board("MAX32666") == "max32666fthr"
-    assert adapter.platformio_board("MAX32670") == "max32670evkit"
-    assert adapter.platformio_board("MAX32690") == "max32690evkit"
+    # platform-maxim32 does not support MAX32660/66/70/90 (upstream board
+    # list stops at MAX32600/32620/32625/32630) -> opt out to native build.
+    assert adapter.platformio_board("MAX32660") == ""
+    assert adapter.platformio_board("MAX32666") == ""
+    assert adapter.platformio_board("MAX32670") == ""
+    assert adapter.platformio_board("MAX32690") == ""
 
 
 def test_max32_supports_freertos_on_platformio() -> None:
@@ -194,12 +197,12 @@ def test_imxrt_build_command_falls_back_to_make() -> None:
     assert cmd == ["make", "-C", "/proj"]
 
 
-def test_imxrt_build_command_falls_back_to_gcc_version() -> None:
+def test_imxrt_build_command_reports_no_toolchain_without_cmake_make() -> None:
     adapter = vendor_adapters.get_adapter("imxrt")
     assert adapter is not None
     with patch("vendor_adapters.imxrt.shutil.which", return_value=""):
         cmd = adapter.build_command({"project_root": "/proj"})
-    assert cmd == ["arm-none-eabi-gcc", "--version"]
+    assert cmd == []
 
 
 def test_imxrt_flash_command_prefers_probe_rs() -> None:
@@ -318,12 +321,12 @@ def test_rx_build_command_uses_make_when_present() -> None:
     assert cmd == ["make", "-C", "/proj"]
 
 
-def test_rx_build_command_falls_back_to_rx_gcc_version() -> None:
+def test_rx_build_command_reports_no_toolchain_without_make() -> None:
     adapter = vendor_adapters.get_adapter("rx")
     assert adapter is not None
     with patch("vendor_adapters.rx.shutil.which", side_effect=lambda n: "/usr/bin/rx-elf-gcc" if n == "rx-elf-gcc" else ""):
         cmd = adapter.build_command({"project_root": "/proj"})
-    assert cmd == ["rx-elf-gcc", "--version"]
+    assert cmd == []
 
 
 def test_rx_flash_command_prefers_rfp_cli() -> None:
@@ -365,7 +368,7 @@ def test_rx_observe_command_requires_port() -> None:
     assert adapter is not None
     assert adapter.observe_command({}) == []
     cmd = adapter.observe_command({"port": "/dev/ttyUSB0", "baud": "115200"})
-    assert cmd[0] == "python"
+    assert cmd[0] == sys.executable
     assert "/dev/ttyUSB0" in cmd
 
 

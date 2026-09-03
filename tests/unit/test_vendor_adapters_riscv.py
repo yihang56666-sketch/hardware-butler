@@ -50,14 +50,13 @@ def test_riscv_build_command_uses_make_when_present() -> None:
     assert cmd == ["make", "-C", "/proj"]
 
 
-def test_riscv_build_command_falls_back_to_gcc_version() -> None:
+def test_riscv_build_command_reports_no_toolchain_when_no_make() -> None:
     adapter = vendor_adapters.get_adapter("riscv")
     assert adapter is not None
     with patch("vendor_adapters.riscv.shutil.which", return_value=""):
         cmd = adapter.build_command({"project_root": "/proj"})
-    # Default fallback tool name when none on PATH
-    assert cmd[0] == "riscv64-unknown-elf-gcc"
-    assert "--version" in cmd
+    # A bare `gcc --version` probe would be counted as a successful build.
+    assert cmd == []
 
 
 def test_riscv_flash_command_prefers_wlink() -> None:
@@ -93,7 +92,7 @@ def test_riscv_observe_command_requires_port() -> None:
     assert adapter is not None
     assert adapter.observe_command({}) == []
     cmd = adapter.observe_command({"port": "/dev/ttyUSB0", "baud": "115200"})
-    assert cmd[0] == "python"
+    assert cmd[0] == sys.executable
     assert "/dev/ttyUSB0" in cmd
     assert "115200" in cmd
 
@@ -101,25 +100,29 @@ def test_riscv_observe_command_requires_port() -> None:
 def test_riscv_platformio_board_mapping() -> None:
     adapter = vendor_adapters.get_adapter("riscv")
     assert adapter is not None
-    assert adapter.platformio_board("CH32V103R8T6") == "ch32v103"
-    assert adapter.platformio_board("CH32V203C8T6") == "ch32v203"
-    assert adapter.platformio_board("CH32V307VCT6") == "ch32v307"
-    assert adapter.platformio_board("GD32VF103C8T6") == "sipeed-longan-nano"
-    # Unknown -> conservative default
-    assert adapter.platformio_board("UNKNOWN") == "ch32v103"
+    # No stock `platform = wch-riscv` exists in PlatformIO: CH32V needs the
+    # community git-URL platform and GD32V lives under the sipeed gd32v
+    # platform. All parts opt out ("" -> native make/gcc build path).
+    assert adapter.platformio_board("CH32V103R8T6") == ""
+    assert adapter.platformio_board("CH32V203C8T6") == ""
+    assert adapter.platformio_board("CH32V307VCT6") == ""
+    assert adapter.platformio_board("GD32VF103C8T6") == ""
+    assert adapter.platformio_board("UNKNOWN") == ""
 
 
 def test_riscv_platformio_platform_and_framework() -> None:
     adapter = vendor_adapters.get_adapter("riscv")
     assert adapter is not None
-    assert adapter._platformio_platform() == "wch-riscv"
-    assert adapter._platformio_framework() == "hal"
+    assert adapter._platformio_platform() == ""
+    assert adapter._platformio_framework() == ""
 
 
 def test_riscv_supports_freertos_on_platformio() -> None:
     adapter = vendor_adapters.get_adapter("riscv")
     assert adapter is not None
-    assert adapter.supports_freertos_on_platformio() is True
+    # PlatformIO is disabled for this family (no stock registry platform);
+    # FreeRTOS codegen goes through the native make/gcc build path.
+    assert adapter.supports_freertos_on_platformio() is False
 
 
 def test_riscv_datasheet_queries_include_mounriver() -> None:

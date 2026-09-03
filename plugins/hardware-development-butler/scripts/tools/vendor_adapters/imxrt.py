@@ -23,6 +23,8 @@ from typing import Any
 
 from vendor_adapters import VendorAdapter, _segger_jlink, register_adapter
 
+from . import jlink_flash_command, serial_monitor_command
+
 
 class IMXRTAdapter(VendorAdapter):
     def __init__(self) -> None:
@@ -69,7 +71,8 @@ class IMXRTAdapter(VendorAdapter):
             return ["cmake", "--build", str(project_root)]
         if shutil.which("make"):
             return ["make", "-C", str(project_root)]
-        return ["arm-none-eabi-gcc", "--version"]
+        # 版本探测命令 rc=0 会被 runner 记成"构建成功"，改报无工具链。
+        return []
 
     def flash_command(self, ctx: dict[str, Any]) -> list[str]:
         elf = ctx.get("elf", "firmware.elf")
@@ -90,10 +93,10 @@ class IMXRTAdapter(VendorAdapter):
             args.append(elf)
             return args
         if tool in ("JLinkExe", "JLink.exe"):
-            args = [tool, "-autoconnect", "1", "-commanderscript", "flash.jlink"]
-            if target:
-                args.extend(["-device", target])
-            return args
+            # J-Link 需要真实存在的命令脚本（含 loadfile），否则必然失败。
+            if not target:
+                return []
+            return jlink_flash_command(tool, target=target, elf=elf)
         if tool == "openocd":
             cfg = ctx.get("openocd_cfg", "imxrt.cfg")
             return ["openocd", "-f", cfg, "-c", f"program {elf} verify reset exit"]
@@ -114,7 +117,7 @@ class IMXRTAdapter(VendorAdapter):
             return args
         port = ctx.get("port", "")
         if port:
-            return ["python", "-m", "serial.tools.miniterm", port, "115200"]
+            return serial_monitor_command(port)
         return []
 
     def datasheet_queries(self, part: str) -> list[str]:

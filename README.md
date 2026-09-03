@@ -6,6 +6,8 @@
 
 **一个自动化程度高的嵌入式开发助手** — 你说"在 PD12 上让 LED 以 2Hz 闪烁"，它从这一句话开始，自动完成选芯片 → 拉资料 → 配 CubeMX → LLM 写固件代码 → 编译 → 烧录 → 调试观测 → 验证目标 → 失败则自我迭代，直到完成。
 
+A safety-first embedded hardware copilot that turns board evidence, CubeMX projects, firmware plans, and bench bring-up into clear, gated next steps.
+
 这是一个面向嵌入式硬件开发的工作区容器，不是单一固件工程。它把项目扫描、CubeMX/构建识别、芯片资料整理、固件代码生成、台架预检、安全门控和 LLM 自主迭代放在同一个 9 阶段工作流里。
 
 目标不是一上来就替你烧录板子，而是先安全地回答三个问题：
@@ -20,7 +22,7 @@
 - **5 层行为验证**（kind-keyword / 频率测量 / expected_text / expected_regex / value-range bounds）
 - **LLM client**（4 种 provider：claude-code host-agent / anthropic / openai / local，含 HTTP 重试加固）
 - **三层安全门控**（env-var opt-in + confirmation token + value-sanity + artifact_hash 验证）
-- **PyQt6 GUI** 12 个 tab + CLI 36+ 子命令
+- **PyQt6 GUI** 13 个 tab + CLI 36+ 子命令
 - **资料搜集整合**（datasheet 下载 → PDF 摘要 → 自由问答）
 - **无板可用**：默认 mock 模式完整跑通 9 阶段；QEMU observe backend 提供行为仿真
 
@@ -95,9 +97,9 @@ python tools\hardware_butler.py workflow-run \
 
 | 工具 | 用途 | 安装 |
 |---|---|---|
-| PlatformIO | 跨厂商构建（STM32/ESP32/TI/AVR/RISC-V/Renesas RA/NXP LPC/MAX32/i.MX RT，600+ board） | `pip install platformio` |
+| PlatformIO | 跨厂商构建（STM32/ESP32/TI/AVR/NXP LPC/i.MX RT 等官方 registry 覆盖的 family；RISC-V 与 EK-RA 板卡无官方 registry 条目，自动回退 make+gcc 路径） | `pip install platformio` |
 | probe-rs | 跨厂商烧录 + RTT 调试（Cortex-M 全系 + ESP32 + RP2040 + Nordic） | `cargo install probe-rs` 或下载二进制 |
-| openocd | 跨厂商烧录 + 调试（Cortex-M/RISC-V/部分 C2000） | 系统包管理器或官网下载 |
+| openocd | 跨厂商烧录 + 调试（Cortex-M/RISC-V；不支持 C2000——无 C28x target） | 系统包管理器或官网下载 |
 | J-Link | SEGGER 官方调试器（Renesas RA/RX、NXP LPC/i.MX RT、Maxim MAX32 推荐） | 官网下载 |
 | pyOCD | NXP 维护的 Cortex-M 调试器（LPC/MAX32/STM32/RA6 支持） | `pip install pyocd` |
 | pyserial | 串口观测（所有 family 都支持 UART observe fallback） | `pip install pyserial` |

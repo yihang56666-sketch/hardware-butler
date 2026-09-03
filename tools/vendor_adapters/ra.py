@@ -21,6 +21,8 @@ from typing import Any
 
 from vendor_adapters import VendorAdapter, _segger_jlink, register_adapter
 
+from . import jlink_flash_command, serial_monitor_command
+
 
 class RAAdapter(VendorAdapter):
     def __init__(self) -> None:
@@ -60,7 +62,8 @@ class RAAdapter(VendorAdapter):
         project_root = ctx.get("project_root", ".")
         if shutil.which("make"):
             return ["make", "-C", str(project_root)]
-        return ["arm-none-eabi-gcc", "--version"]
+        # 版本探测命令 rc=0 会被 runner 记成"构建成功"，改报无工具链。
+        return []
 
     def flash_command(self, ctx: dict[str, Any]) -> list[str]:
         elf = ctx.get("elf", "firmware.elf")
@@ -68,12 +71,10 @@ class RAAdapter(VendorAdapter):
         target = self.canonical_chip(str(ctx.get("target", "") or ctx.get("part", "")))
         probe = ctx.get("probe", "")
         if tool in ("JLinkExe", "JLink.exe"):
-            args = [tool, "-autoconnect", "1", "-commanderscript", "flash.jlink"]
-            if target:
-                args.extend(["-device", target])
-            if probe:
-                args.extend(["-usb", probe])
-            return args
+            # J-Link 需要真实存在的命令脚本（含 loadfile），否则必然失败。
+            if not target:
+                return []
+            return jlink_flash_command(tool, target=target, elf=elf, probe=probe)
         if tool == "pyocd":
             args = ["pyocd", "flash", "-t", target or "r7fa6m5bh"]
             if probe:
@@ -95,7 +96,7 @@ class RAAdapter(VendorAdapter):
             return args
         port = ctx.get("port", "")
         if port:
-            return ["python", "-m", "serial.tools.miniterm", port, "115200"]
+            return serial_monitor_command(port)
         return []
 
     def datasheet_queries(self, part: str) -> list[str]:
@@ -110,20 +111,15 @@ class RAAdapter(VendorAdapter):
     def platformio_board(self, part: str) -> str:
         """Map RA part to PlatformIO board id (renesas-ra platform).
 
-        Note: Arduino Portenta C33 uses RA6M5 (NOT RA4M3 as some docs claim).
-        RA4M2/RA4M3 don't have a stock PlatformIO board definition that
-        matches their memory map; return "" so the workflow falls back to
+        The official renesas-ra registry only ships the Arduino Uno R4
+        boards (uno_r4_minima / uno_r4_wifi, both RA4M1-based); the EK-RA
+        ids (ra6m2_ek etc.) are TinyUSB board names that PlatformIO cannot
+        resolve. Unmapped parts return "" so the workflow falls back to
         arm-none-eabi-gcc + the adapter's own build_command path."""
         p = part.upper()
         if "RA4M1" in p:
-            return "uno_r4"  # Arduino Uno R4 uses RA4M1
-        if "RA6M2" in p:
-            return "ra6m2_ek"
-        if "RA6M3" in p:
-            return "ra6m3_ek"
-        if "RA6M5" in p:
-            return "ra6m5_ek"  # also matches Portenta C33 (RA6M5)
-        return "uno_r4"
+            return "uno_r4_minima"  # Arduino Uno R4 (Minima/WiFi) uses RA4M1
+        return ""
 
     def _platformio_platform(self) -> str:
         return "renesas-ra"

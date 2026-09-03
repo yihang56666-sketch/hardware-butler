@@ -15,6 +15,8 @@ from typing import Any
 
 from vendor_adapters import VendorAdapter, register_adapter
 
+from . import serial_monitor_command
+
 
 class AVRAdapter(VendorAdapter):
     def __init__(self) -> None:
@@ -46,8 +48,8 @@ class AVRAdapter(VendorAdapter):
         project_root = ctx.get("project_root", ".")
         if shutil.which("make"):
             return ["make", "-C", str(project_root)]
-        # Fallback: direct gcc invocation (caller is responsible for source layout).
-        return ["avr-gcc", "--version"]
+        # A bare `avr-gcc --version` probe is not a build; report no toolchain.
+        return []
 
     def flash_command(self, ctx: dict[str, Any]) -> list[str]:
         elf = ctx.get("elf", "firmware.hex")
@@ -61,7 +63,7 @@ class AVRAdapter(VendorAdapter):
         port = ctx.get("port", "")
         baud = ctx.get("baud", "9600")
         if port:
-            return ["python", "-m", "serial.tools.miniterm", port, baud]
+            return serial_monitor_command(port, baud)
         return []
 
     def datasheet_queries(self, part: str) -> list[str]:

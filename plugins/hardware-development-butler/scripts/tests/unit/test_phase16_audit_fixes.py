@@ -65,20 +65,6 @@ def test_all_adapters_use_segger_jlink_not_raw_which() -> None:
     where a new adapter forgets the JDK guard."""
     import re
 
-    import vendor_adapters.avr
-    import vendor_adapters.c2000
-    import vendor_adapters.esp32
-    import vendor_adapters.imxrt
-    import vendor_adapters.lpc
-    import vendor_adapters.max32
-    import vendor_adapters.msp430
-    import vendor_adapters.nordic
-    import vendor_adapters.pic32
-    import vendor_adapters.ra
-    import vendor_adapters.riscv
-    import vendor_adapters.rx
-    import vendor_adapters.stm32
-    import vendor_adapters.tiva
 
     adapter_files = [
         "tools/vendor_adapters/avr.py",
@@ -141,8 +127,8 @@ def test_verify_artifact_hash_blocks_hash_mismatch(tmp_path: Path) -> None:
 
 def test_verify_artifact_hash_passes_when_match(tmp_path: Path) -> None:
     """Happy path: artifact exists, hash matches — status ok."""
-    import hardware_action_plan
     import hardware_action_executor
+    import hardware_action_plan
 
     elf = tmp_path / "fw.elf"
     elf.write_bytes(b"confirmed firmware")
@@ -279,9 +265,10 @@ def test_append_event_concurrent_writes_preserve_all_entries(tmp_path: Path) -> 
 def test_llm_client_401_reports_1_attempt_not_max(tmp_path: Path, monkeypatch) -> None:
     """A fatal 401 error on the first attempt must report attempts=1, NOT
     MAX_ATTEMPTS (which would mislead audit logs into thinking we retried)."""
+    import urllib.error
+
     import llm_client
     import llm_config
-    import urllib.error
 
     config = llm_config.LLMConfig(
         provider="anthropic",
@@ -314,9 +301,10 @@ def test_llm_client_401_reports_1_attempt_not_max(tmp_path: Path, monkeypatch) -
 
 def test_llm_client_persistent_500_reports_max_attempts(tmp_path: Path, monkeypatch) -> None:
     """A persistent 500 (transient but never recovers) must report attempts=MAX_ATTEMPTS."""
+    import urllib.error
+
     import llm_client
     import llm_config
-    import urllib.error
 
     config = llm_config.LLMConfig(
         provider="anthropic",

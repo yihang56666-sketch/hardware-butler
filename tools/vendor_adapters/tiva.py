@@ -20,6 +20,8 @@ from typing import Any
 
 from vendor_adapters import VendorAdapter, register_adapter
 
+from . import serial_monitor_command
+
 
 class TivaAdapter(VendorAdapter):
     def __init__(self) -> None:
@@ -59,7 +61,8 @@ class TivaAdapter(VendorAdapter):
         project_root = ctx.get("project_root", ".")
         if shutil.which("make"):
             return ["make", "-C", str(project_root)]
-        return ["arm-none-eabi-gcc", "--version"]
+        # 版本探测命令 rc=0 会被 runner 记成"构建成功"，改报无工具链。
+        return []
 
     def flash_command(self, ctx: dict[str, Any]) -> list[str]:
         elf = ctx.get("elf", "firmware.bin")
@@ -82,7 +85,7 @@ class TivaAdapter(VendorAdapter):
         port = ctx.get("port", "")
         baud = ctx.get("baud", "115200")
         if port:
-            return ["python", "-m", "serial.tools.miniterm", port, baud]
+            return serial_monitor_command(port, baud)
         return []
 
     def datasheet_queries(self, part: str) -> list[str]:
@@ -94,10 +97,14 @@ class TivaAdapter(VendorAdapter):
         ]
 
     def platformio_board(self, str_part: str) -> str:
-        """Map Tiva part to PlatformIO board id (titiva platform)."""
+        """Map Tiva part to PlatformIO board id (titiva platform).
+
+        The real titiva board id for TM4C123 parts is lptm4c123gh6pm (the
+        launchpad's TM4C123GH6PM chip); lptm4c1230c6pd does not exist in the
+        registry and makes every build fail with "unknown board"."""
         p = str_part.upper()
         if "TM4C123" in p:
-            return "lptm4c1230c6pd"
+            return "lptm4c123gh6pm"
         if "TM4C129" in p:
             return "lptm4c1294ncpdt"
         if "CC2650" in p:
@@ -107,8 +114,8 @@ class TivaAdapter(VendorAdapter):
         if "CC1310" in p:
             return "cc1310_launchpad"
         if "LM4F" in p:
-            return "lptm4c1230c6pd"  # LM4F → TM4C123 launchpad equivalent
-        return "lptm4c1230c6pd"
+            return "lptm4c123gh6pm"  # LM4F → TM4C123 launchpad equivalent
+        return "lptm4c123gh6pm"
 
     def _platformio_platform(self) -> str:
         return "titiva"

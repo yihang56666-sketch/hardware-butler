@@ -23,6 +23,8 @@ from typing import Any
 
 from vendor_adapters import VendorAdapter, _segger_jlink, register_adapter
 
+from . import jlink_flash_command, serial_monitor_command
+
 
 class MAX32Adapter(VendorAdapter):
     def __init__(self) -> None:
@@ -62,7 +64,8 @@ class MAX32Adapter(VendorAdapter):
         project_root = ctx.get("project_root", ".")
         if shutil.which("make"):
             return ["make", "-C", str(project_root)]
-        return ["arm-none-eabi-gcc", "--version"]
+        # 版本探测命令 rc=0 会被 runner 记成"构建成功"，改报无工具链。
+        return []
 
     def flash_command(self, ctx: dict[str, Any]) -> list[str]:
         elf = ctx.get("elf", "firmware.elf")
@@ -86,10 +89,10 @@ class MAX32Adapter(VendorAdapter):
                 args.extend(["--probe", probe])
             return args
         if tool in ("JLinkExe", "JLink.exe"):
-            args = [tool, "-autoconnect", "1", "-commanderscript", "flash.jlink"]
-            if target:
-                args.extend(["-device", target])
-            return args
+            # J-Link 需要真实存在的命令脚本（含 loadfile），否则必然失败。
+            if not target:
+                return []
+            return jlink_flash_command(tool, target=target, elf=elf)
         return []
 
     def observe_command(self, ctx: dict[str, Any]) -> list[str]:
@@ -101,7 +104,7 @@ class MAX32Adapter(VendorAdapter):
             return args
         port = ctx.get("port", "")
         if port:
-            return ["python", "-m", "serial.tools.miniterm", port, "115200"]
+            return serial_monitor_command(port)
         return []
 
     def datasheet_queries(self, part: str) -> list[str]:
@@ -114,17 +117,13 @@ class MAX32Adapter(VendorAdapter):
         ]
 
     def platformio_board(self, part: str) -> str:
-        """Map MAX32 part to PlatformIO board id (maxim32 platform)."""
-        p = part.upper()
-        if "MAX32660" in p:
-            return "max32660evsys"
-        if "MAX32666" in p:
-            return "max32666fthr"
-        if "MAX32670" in p:
-            return "max32670evkit"
-        if "MAX32690" in p:
-            return "max32690evkit"
-        return "max32660evsys"
+        """Map MAX32 part to PlatformIO board id (maxim32 platform).
+
+        platform-maxim32 does NOT support MAX32660/66/70/90 (its board list
+        stops at MAX32600/32620/32625/32630; the MAX32660 gap is a known
+        upstream issue). Unmapped parts return "" so builds fall back to
+        the adapter's native arm-none-eabi-gcc path."""
+        return ""
 
     def _platformio_platform(self) -> str:
         return "maxim32"

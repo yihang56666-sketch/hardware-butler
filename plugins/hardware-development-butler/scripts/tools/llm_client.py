@@ -203,6 +203,12 @@ def call_llm(
     error dict carries ``error_kind`` ("transient" or "fatal") and ``attempts``.
     """
     if config.provider == "claude-code":
+        # Check for an existing response BEFORE appending a new task: every
+        # resume/poll of a pending stage would otherwise append an identical
+        # task line and flood the host agent's queue with duplicates.
+        cached = _read_response(root, task_id)
+        if cached:
+            return {"status": "ok", "text": str(cached.get("text", ""))}
         task = {
             "schema_version": 1,
             "task_id": task_id,
@@ -213,9 +219,6 @@ def call_llm(
             "timestamp": time.time(),
         }
         _append_jsonl(_tasks_path(root), task)
-        cached = _read_response(root, task_id)
-        if cached:
-            return {"status": "ok", "text": str(cached.get("text", ""))}
         return {"status": "pending", "text": ""}
     attempts_used = 1
     try:

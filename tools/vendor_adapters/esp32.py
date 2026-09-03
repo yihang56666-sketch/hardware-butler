@@ -17,6 +17,8 @@ from typing import Any
 
 from vendor_adapters import VendorAdapter, register_adapter
 
+from . import serial_monitor_command
+
 
 class ESP32Adapter(VendorAdapter):
     def __init__(self) -> None:
@@ -51,7 +53,8 @@ class ESP32Adapter(VendorAdapter):
         project_root = ctx.get("project_root", ".")
         if shutil.which("idf.py"):
             return ["idf.py", "-C", str(project_root), "build"]
-        return ["xtensa-esp32-elf-gcc", "--version"]
+        # A bare `xtensa-esp32-elf-gcc --version` probe is not a build.
+        return []
 
     def flash_command(self, ctx: dict[str, Any]) -> list[str]:
         tool = self._pick_flash_tool()
@@ -75,7 +78,7 @@ class ESP32Adapter(VendorAdapter):
                 return ["idf.py", "-p", port, "monitor"]
             return ["idf.py", "monitor"]
         if port:
-            return ["python", "-m", "serial.tools.miniterm", port, baud]
+            return serial_monitor_command(port, baud)
         return []
 
     def datasheet_queries(self, part: str) -> list[str]:

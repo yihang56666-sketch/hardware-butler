@@ -18,6 +18,8 @@ from typing import Any
 
 from vendor_adapters import VendorAdapter, _segger_jlink, register_adapter
 
+from . import serial_monitor_command
+
 
 class NordicAdapter(VendorAdapter):
     def __init__(self) -> None:
@@ -46,7 +48,8 @@ class NordicAdapter(VendorAdapter):
         project_root = ctx.get("project_root", ".")
         if shutil.which("cmake") and shutil.which("ninja"):
             return ["cmake", "--build", str(project_root)]
-        return ["arm-none-eabi-gcc", "--version"]
+        # A bare `arm-none-eabi-gcc --version` probe is not a build.
+        return []
 
     def flash_command(self, ctx: dict[str, Any]) -> list[str]:
         # Prefer probe-rs (cross-vendor, open source); fall back to nrfjprog
@@ -78,7 +81,7 @@ class NordicAdapter(VendorAdapter):
             return args
         port = ctx.get("port", "")
         if port:
-            return ["python", "-m", "serial.tools.miniterm", port, "115200"]
+            return serial_monitor_command(port)
         return []
 
     def datasheet_queries(self, part: str) -> list[str]:

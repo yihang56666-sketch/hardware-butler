@@ -44,6 +44,68 @@ def _segger_jlink() -> str:
     return found
 
 
+def jlink_flash_command(tool: str, *, target: str, elf: str, probe: str = "") -> list[str]:
+    """Build a J-Link Commander flash invocation backed by a real script.
+
+    J-Link cannot program a part without a commander script that contains
+    `loadfile`: a `-commanderscript flash.jlink` reference to a file nobody
+    writes exits with "Cannot open script file", and a bare interactive
+    JLink launch hangs until the subprocess timeout.
+
+    The script is materialised in the system temp directory (the write path
+    never derives from workflow input), and the ELF path only lands in the
+    script content after traversal-segment and command-injection checks.
+    """
+    import os
+    import tempfile
+
+    if not target:
+        # Without a device J-Link prompts interactively and hangs.
+        return []
+    elf_path = os.path.abspath(elf)
+    segments = elf_path.replace("\\", "/").split("/")
+    if any(segment == os.path.pardir for segment in segments):
+        return []
+    # Commander scripts are line-based; quotes/control characters inside the
+    # loadfile line would let a tampered path inject extra script commands.
+    if any(character in elf_path for character in "\"'\n\r\t;"):
+        return []
+    lines = [
+        "si SWD",
+        "speed 4000",
+        f"device {target}",
+        "connect",
+        "r",
+        "h",
+        f'loadfile "{elf_path}"',
+        "r",
+        "g",
+        "qc",
+    ]
+    descriptor, script_path = tempfile.mkstemp(prefix="hwbutler-flash-", suffix=".jlink", text=True)
+    # utf-8, not ascii: the embedded loadfile path legitimately contains
+    # non-ASCII characters on real workstations (CJK project directories).
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        handle.write("\n".join(lines) + "\n")
+    args = [tool, "-autoconnect", "1", "-commanderscript", script_path, "-device", target]
+    if probe:
+        args.extend(["-usb", probe])
+    return args
+
+
+def serial_monitor_command(port: str, baud: str = "115200") -> list[str]:
+    """Return argv to run pyserial miniterm on the HOST interpreter.
+
+    Bare "python" resolves through PATH and, on a Windows venv launched
+    without activation, lands on the system interpreter — which may lack
+    pyserial. Pin the command to sys.executable so the observe path uses
+    the same environment the workflow itself runs in.
+    """
+    import sys
+
+    return [sys.executable, "-m", "serial.tools.miniterm", port, baud]
+
+
 @dataclass(frozen=True)
 class VendorAdapter:
     """Base class for all vendor adapters.
@@ -156,6 +218,12 @@ class VendorAdapter:
                 script_path.write_text(script, encoding="utf-8")
             elif script_path.exists():
                 script_path.unlink()
+        if not board and not ini_path.exists():
+            # No board mapping (adapter opts out of PlatformIO) and no
+            # user-provided ini: `pio run` here is guaranteed to fail with
+            # "missing platformio.ini". Return [] so the runner falls back
+            # to the adapter's native build_command path.
+            return []
         return [pio_bin, "run", "-d", str(build_root)]
 
     def pio_build_root(self, ctx: dict[str, Any]) -> Path:
@@ -277,7 +345,7 @@ class VendorAdapter:
         baud = ctx.get("baud", "115200")
         if not port:
             return []
-        return ["python", "-m", "serial.tools.miniterm", port, baud]
+        return serial_monitor_command(port, baud)
 
     def datasheet_queries(self, part: str) -> list[str]:
         """Return search queries for the datasheet-collect stage."""

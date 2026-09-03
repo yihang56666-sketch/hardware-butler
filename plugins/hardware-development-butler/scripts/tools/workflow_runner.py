@@ -12,6 +12,7 @@ import json
 import os
 import re as _re
 import secrets
+import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1070,7 +1071,10 @@ def _run_embeddedskills_script(script_rel_path: str, args: list[str], *, timeout
     script_path = es_root / script_rel_path
     if not script_path.exists():
         return {"status": "error", "returncode": -1, "stdout": "", "stderr": f"script not found: {script_path}"}
-    cmd = ["python", str(script_path)] + args
+    # sys.executable, not bare "python": on a Windows venv launched without
+    # activation, PATH resolves `python` to the system interpreter, which may
+    # lack the script's third-party imports.
+    cmd = [sys.executable, str(script_path)] + args
     try:
         proc = subprocess.run(
             cmd, capture_output=True, text=True,
@@ -1191,6 +1195,14 @@ def _stage_build(
                 evidence={"build_plan": plan, "build_executed": False, "reason": f"no {adapter.family} build tools + no PlatformIO on host; plan-only", "adapter": adapter.to_dict()},
             )
         cmd = adapter.build_command(build_ctx)
+        if not cmd:
+            # Adapter reports no usable native build tool (e.g. bare-metal
+            # gcc exists but no make/CMakeLists driver); plan-only instead of
+            # executing anything.
+            return StageResult(
+                status="completed",
+                evidence={"build_plan": plan, "build_executed": False, "reason": f"no {adapter.family} build driver available; plan-only", "adapter": adapter.to_dict()},
+            )
         result = _run_subprocess(cmd, timeout_s=300)
         build_log = result.get("stdout", "") + "\n" + result.get("stderr", "")
         build_executed = result["status"] == "ok"
@@ -1397,22 +1409,24 @@ def _stage_flash(
                 }
                 # P3 Step F: prefer probe-rs for cross-vendor flash, fall back
                 # to adapter native flash_command, then to embeddedskills scripts.
+                # The chain advances on ATTEMPT, not on result truthiness: a
+                # failed probe-rs run still produces a truthy result dict, and
+                # gating the fallbacks on it would strand the board with no
+                # flash attempt from any other backend.
                 probe_rs_cmd = adapter.flash_via_probe_rs(flash_ctx)
                 if probe_rs_cmd:
                     flash_result = _run_subprocess(probe_rs_cmd, timeout_s=120)
                     flash_executed = flash_result["status"] == "ok"
                     flash_backend_used = "probe-rs"
-                    if not flash_executed:
-                        status = "failed"
-                if not flash_result:
+                    status = "completed" if flash_executed else "failed"
+                if not flash_executed:
                     cmd = adapter.flash_command(flash_ctx)
                     if cmd:
                         flash_result = _run_subprocess(cmd, timeout_s=120)
                         flash_executed = flash_result["status"] == "ok"
                         flash_backend_used = adapter.family
-                        if not flash_executed:
-                            status = "failed"
-            if not flash_result:
+                        status = "completed" if flash_executed else "failed"
+            if not flash_executed:
                 chip_stage = next((s for s in state["stages"] if s["id"] == "chip-selection"), None)
                 backends = (chip_stage or {}).get("evidence", {}).get("backends", {}) if chip_stage else {}
                 flash_backend = backends.get("backends", {}).get("flash", "unknown") if isinstance(backends.get("backends"), dict) else "unknown"
@@ -1431,8 +1445,7 @@ def _stage_flash(
                     flash_result = _run_embeddedskills_script(script, flash_args, timeout_s=120)
                     flash_executed = flash_result["status"] == "ok"
                     flash_backend_used = flash_backend
-                    if not flash_executed:
-                        status = "failed"
+                    status = "completed" if flash_executed else "failed"
 
     return StageResult(
         status=status,
@@ -1542,9 +1555,13 @@ def _measure_toggle_frequency(capture: str, *, kind: str) -> float | None:
 
     import re
 
+    def _marker_pattern(marker: str) -> "re.Pattern[str]":
+        """Word-boundary matcher for a toggle marker ("on", "tx", "itm",
+        or an alternation like "on|toggle on")."""
+        return re.compile(rf"\b(?:{marker})\b")
+
     ts_pattern = re.compile(r"^\s*\[?(\d+(?:\.\d+)?)\]?\s*(.*)$")
 
-    on_markers = ("on", "toggle on", "high", "1")
     if kind == "led":
         event_marker = "on"
     elif kind == "uart":
@@ -1567,7 +1584,10 @@ def _measure_toggle_frequency(capture: str, *, kind: str) -> float | None:
         except ValueError:
             continue
         rest = match.group(2).lower()
-        if event_marker in rest or any(m in rest for m in on_markers if m in ("on", "toggle on")):
+        # Word-boundary match: a bare substring check counts "monitor" /
+        # "button" / "configuration" as LED "on" events and fabricates a
+        # measured frequency from ordinary firmware log lines.
+        if _marker_pattern(event_marker).search(rest) or _marker_pattern("on|toggle on").search(rest):
             timestamps.append(ts)
     if len(timestamps) >= 2:
         # Period = average gap between successive events.
@@ -1882,23 +1902,12 @@ def _stage_debug_observe(
                 observe_mode = "probe-rs-rtt-window"
             else:
                 observe_errors.append({"backend": "probe_rs_rtt", "reason": result.get("stderr", "")[-300:]})
-        if not real_capture:
-            adapter = _get_vendor_adapter(state)
-            if adapter:
-                observe_ctx = {
-                    "port": port,
-                    "baud": "115200",
-                    "target": selected_part or state.get("context", {}).get("target", ""),
-                    "probe": ctx.probe,
-                }
-                cmd = adapter.observe_command(observe_ctx)
-                if cmd:
-                    result = _run_subprocess(cmd, timeout_s=int(window_s) + 30)
-                    if result["status"] == "ok":
-                        real_capture = _extract_stream_text(result.get("stdout", ""))
-                        observe_mode = f"{adapter.family}-native"
-                    else:
-                        observe_errors.append({"backend": adapter.family, "reason": result.get("stderr", "")[-300:]})
+        # NOTE: deliberately NO adapter.observe_command() fallback here — for
+        # every family it returns an INTERACTIVE tool (serial.tools.miniterm /
+        # `probe-rs rtt attach`) that cannot terminate on its own; running it
+        # would burn the whole window + 30s timeout and log terminal escape
+        # garbage instead of firmware output. The windowed pyserial / RTT
+        # scripts above are the only non-interactive real-observe backends.
 
     observations = []
     sim_capture = ""
@@ -2021,14 +2030,19 @@ def _stage_verify_goal(
     # P3: run _verify_signal for each signal kind, both keyword-matched and
     # with the real capture (if real mode). This catches cases where sim
     # capture says "matched" but real capture lacks the expected text.
-    capture_for_verify = observe_capture if observe_mode != "sim" and observe_capture else (
-        observe_ev.get("capture", "") if isinstance(observe_ev, dict) else ""
-    )
+    # The synthetic capture is ONLY a stand-in for sim mode: a real observe
+    # backend that produced zero bytes (wrong baud, unwired TX, dead board)
+    # must fail verification, not pass against data built to match every
+    # signal.
+    if observe_mode == "sim":
+        capture_for_verify = observe_capture or _sim_capture_from_signals(signals)
+    else:
+        capture_for_verify = observe_capture
     for sig in signals:
         kind = str(sig.get("kind", ""))
         if kind not in goal_keywords and goal_keywords:
             continue
-        verify = _verify_signal(sig, capture_for_verify or _sim_capture_from_signals(signals))
+        verify = _verify_signal(sig, capture_for_verify)
         verify_details.append({"signal": sig, "verify": verify})
         if verify["matched"]:
             if kind not in matched:

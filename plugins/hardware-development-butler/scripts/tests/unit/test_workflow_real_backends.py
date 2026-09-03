@@ -109,7 +109,11 @@ def test_flash_real_backend_probe_rs_success(tmp_path: Path, real_flash_env) -> 
     assert state["goal_token"]["uses"] >= 1
 
 
-def test_flash_real_backend_probe_rs_failure_fails_stage(tmp_path: Path, real_flash_env) -> None:
+def test_flash_real_backend_probe_rs_failure_falls_through_then_fails(tmp_path: Path, real_flash_env) -> None:
+    """probe-rs failure must NOT strand the flash chain: the adapter native
+    command gets its attempt, and the stage still fails honestly when every
+    backend fails (regression: `if not flash_result` gated the fallbacks on a
+    truthy-but-failed result dict, so a failed probe-rs run blocked them)."""
     project = tmp_path / "proj"
     project.mkdir()
     ctx, state = _state_with_stages(project)
@@ -119,11 +123,17 @@ def test_flash_real_backend_probe_rs_failure_fails_stage(tmp_path: Path, real_fl
     assert adapter is not None
     with patch("bench_runbook.generate_runbook", return_value={"action_plan": {"steps": []}}):
         with patch.object(adapter, "flash_via_probe_rs", return_value=["probe-rs", "download", "--verify", "build/firmware.elf"]):
-            with patch("workflow_runner._run_subprocess", return_value={"status": "error", "returncode": 1, "stdout": "", "stderr": "no probe"}):
-                result = wr._stage_flash(project, ctx, state)
+            with patch.object(adapter, "flash_command", return_value=["pyocd", "flash", "build/firmware.elf"]) as native:
+                with patch("workflow_runner._run_embeddedskills_script", return_value={"status": "error", "returncode": 1, "stdout": "", "stderr": "no backend"}):
+                    with patch("workflow_runner._run_subprocess", return_value={"status": "error", "returncode": 1, "stdout": "", "stderr": "no probe"}):
+                        result = wr._stage_flash(project, ctx, state)
     assert result.status == "failed"
     assert result.evidence["flash_executed"] is False
-    assert result.evidence["flash_backend"] == "probe-rs"
+    # probe-rs was attempted first, then the chain advanced: stm32 native
+    # (proven by native.called), finally the chip-stage's embeddedskills
+    # backend ("openocd") is the last attempt recorded in the evidence.
+    assert result.evidence["flash_backend"] == "openocd"
+    assert native.called
 
 
 def test_flash_real_backend_adapter_native_fallback(tmp_path: Path, real_flash_env) -> None:

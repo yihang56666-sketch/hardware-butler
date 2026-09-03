@@ -81,11 +81,22 @@ def find_frozen_cli() -> Path:
 class CommandWorker(QThread):
     finished = pyqtSignal(list, int, str, str)
 
-    def __init__(self, argv: list[str], *, cwd: Path, env: dict[str, str]) -> None:
+    # A multi-stage workflow-run legitimately runs a 300s PlatformIO build +
+    # flash/observe windows; a blanket 120s timeout killed the CLI child
+    # mid-stage and corrupted the workflow run. Long-running commands opt in
+    # to a bigger budget; everything else keeps the snappy default.
+    DEFAULT_TIMEOUT_S = 120
+    WORKFLOW_TIMEOUT_S = 900
+
+    def __init__(self, argv: list[str], *, cwd: Path, env: dict[str, str], timeout_s: int | None = None) -> None:
         super().__init__()
         self.argv = argv
         self.cwd = cwd
         self.env = env
+        if timeout_s is None:
+            joined = " ".join(argv)
+            timeout_s = self.WORKFLOW_TIMEOUT_S if "workflow-run" in joined else self.DEFAULT_TIMEOUT_S
+        self.timeout_s = timeout_s
 
     def run(self) -> None:
         try:
@@ -97,7 +108,7 @@ class CommandWorker(QThread):
                 text=True,
                 encoding="utf-8",
                 errors="replace",
-                timeout=120,
+                timeout=self.timeout_s,
                 env=self.env,
             )
             self.finished.emit(self.argv, result.returncode, result.stdout, result.stderr)
@@ -834,7 +845,14 @@ class HardwareButlerWindow(QMainWindow):
     def load_workflow_llm_config(self) -> None:
         import json as _json
         argv = self.cli("workflow-llm-config", "--root", self.project_root(), "--json")
-        result = subprocess.run(argv, capture_output=True, text=True, encoding="utf-8", errors="replace")
+        try:
+            result = subprocess.run(
+                argv, capture_output=True, text=True, encoding="utf-8",
+                errors="replace", timeout=30,
+            )
+        except subprocess.TimeoutExpired:
+            self.append_output("读取 LLM 配置超时（30s）——CLI 无响应，请检查杀毒软件或磁盘。")
+            return
         if result.returncode != 0:
             self.append_output(f"读取 LLM 配置失败: {result.stderr.strip() or result.stdout.strip()}")
             return

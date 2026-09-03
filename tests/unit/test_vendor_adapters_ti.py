@@ -64,12 +64,12 @@ def test_tiva_build_command_uses_make_when_present() -> None:
     assert cmd == ["make", "-C", "/proj"]
 
 
-def test_tiva_build_command_falls_back_to_gcc_version() -> None:
+def test_tiva_build_command_reports_no_toolchain_without_make() -> None:
     adapter = vendor_adapters.get_adapter("ti-tiva")
     assert adapter is not None
     with patch("vendor_adapters.tiva.shutil.which", return_value=""):
         cmd = adapter.build_command({"project_root": "/proj"})
-    assert cmd == ["arm-none-eabi-gcc", "--version"]
+    assert cmd == []
 
 
 def test_tiva_flash_command_prefers_dslite() -> None:
@@ -125,7 +125,7 @@ def test_tiva_observe_command_requires_port() -> None:
     assert adapter is not None
     assert adapter.observe_command({}) == []
     cmd = adapter.observe_command({"port": "/dev/ttyACM0", "baud": "115200"})
-    assert cmd[0] == "python"
+    assert cmd[0] == sys.executable
     assert "/dev/ttyACM0" in cmd
     assert "115200" in cmd
 
@@ -133,13 +133,14 @@ def test_tiva_observe_command_requires_port() -> None:
 def test_tiva_platformio_board_mapping() -> None:
     adapter = vendor_adapters.get_adapter("ti-tiva")
     assert adapter is not None
-    assert adapter.platformio_board("TM4C123GH6PM") == "lptm4c1230c6pd"
+    # The real titiva board id is the launchpad chip TM4C123GH6PM.
+    assert adapter.platformio_board("TM4C123GH6PM") == "lptm4c123gh6pm"
     assert adapter.platformio_board("TM4C1294NCPDT") == "lptm4c1294ncpdt"
     assert adapter.platformio_board("CC2650F128") == "cc2650_launchpad"
     assert adapter.platformio_board("CC2640R2F") == "cc2640r2_launchpad"
-    assert adapter.platformio_board("LM4F120H5QR") == "lptm4c1230c6pd"
+    assert adapter.platformio_board("LM4F120H5QR") == "lptm4c123gh6pm"
     # Unknown -> conservative default
-    assert adapter.platformio_board("UNKNOWN") == "lptm4c1230c6pd"
+    assert adapter.platformio_board("UNKNOWN") == "lptm4c123gh6pm"
 
 
 def test_tiva_platformio_platform_and_framework() -> None:
@@ -194,12 +195,12 @@ def test_c2000_build_command_uses_make_when_present() -> None:
     assert cmd == ["make", "-C", "/proj"]
 
 
-def test_c2000_build_command_falls_back_to_cl2000_version() -> None:
+def test_c2000_build_command_reports_no_toolchain_without_make() -> None:
     adapter = vendor_adapters.get_adapter("c2000")
     assert adapter is not None
     with patch("vendor_adapters.c2000.shutil.which", side_effect=lambda n: "/usr/bin/cl2000" if n == "cl2000" else ""):
         cmd = adapter.build_command({"project_root": "/proj"})
-    assert cmd == ["cl2000", "--version"]
+    assert cmd == []
 
 
 def test_c2000_build_command_empty_when_no_tools() -> None:
@@ -248,7 +249,7 @@ def test_c2000_observe_command_requires_port() -> None:
     assert adapter is not None
     assert adapter.observe_command({}) == []
     cmd = adapter.observe_command({"port": "/dev/ttyUSB0", "baud": "115200"})
-    assert cmd[0] == "python"
+    assert cmd[0] == sys.executable
     assert "/dev/ttyUSB0" in cmd
 
 
