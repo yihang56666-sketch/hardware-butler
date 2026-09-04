@@ -2,7 +2,7 @@
 
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-832%20passed-brightgreen)](#verification)
+[![Tests](https://img.shields.io/badge/tests-739%20passed%2C%204%20skipped-brightgreen)](#verification)
 
 **一个自动化程度高的嵌入式开发助手** — 你说"在 PD12 上让 LED 以 2Hz 闪烁"，它从这一句话开始，自动完成选芯片 → 拉资料 → 配 CubeMX → LLM 写固件代码 → 编译 → 烧录 → 调试观测 → 验证目标 → 失败则自我迭代，直到完成。
 

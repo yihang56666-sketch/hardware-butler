@@ -10,7 +10,7 @@ Hardware Butler 是一个安全优先的嵌入式开发助手，把一句话硬�
 - 支持 STM32、ESP32、MSP430、AVR、Nordic、RISC-V、TI、Renesas、NXP、Microchip、Maxim 等厂商族，并将 GD32/CH32 映射到 STM32 兼容路径。
 - LLM provider 支持 host-agent、Anthropic、OpenAI 和 local；HTTP 调用对 429/5xx/网络错误指数退避，认证和参数错误不重试。
 - 行为验证按 expected regex/范围、expected text、频率测量、kind 关键词和 QEMU 仿真分层；真实烧录必须同时满足环境变量、确认 token、值域检查和产物校验。
-- PyQt6 GUI 提供 12 个 tab，CLI 提供 36+ 子命令；插件副本可由同步脚本校验。
+- PyQt6 GUI 提供 13 个 tab，CLI 提供 36+ 子命令；插件副本可由同步脚本校验。
 
 ## 可演示路径
 
