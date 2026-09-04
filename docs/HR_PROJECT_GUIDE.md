@@ -24,7 +24,7 @@ ruff check tools/ tests/
 mypy tools/ --config-file mypy.ini
 ```
 
-验证结果：ruff 通过，mypy 对 72 个源文件无问题，单元测试 832 通过、10 skipped。真实板卡、探针、编译器和供电环境不是当前环境可证明的范围。
+验证结果：ruff 通过，mypy 对 72 个源文件无问题，单元测试 739 通过、4 skipped。真实板卡、探针、编译器和供电环境不是当前环境可证明的范围。
 
 ## HR 常问与回答
 
@@ -41,3 +41,4 @@ mypy tools/ --config-file mypy.ini
 ## 下一步
 
 按 `docs/REAL_BOARD_DAY_RUNBOOK.md` 完成一次真实板卡日演练，并将板卡型号、探针、固件 hash 和观测日志归档。
+
