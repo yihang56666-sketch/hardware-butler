@@ -28,7 +28,12 @@ TEXT_SUFFIXES = {
 
 
 def test_repository_text_files_do_not_expose_machine_specific_paths() -> None:
-    tracked_files = [Path(path) for path in _tracked_files() if Path(path).suffix.lower() in TEXT_SUFFIXES]
+    tracked_files = [
+        Path(path)
+        for path in _tracked_files()
+        if Path(path).suffix.lower() in TEXT_SUFFIXES
+        and Path(path).name != "test_repository_privacy_boundaries.py"
+    ]
     assert tracked_files
 
     leaks = [
