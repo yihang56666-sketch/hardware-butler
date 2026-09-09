@@ -2,7 +2,7 @@
 
 - Part: `STM32F407VGTx`
 - Board: unknown
-- Documents directory: `D:\一些有用的项目\硬件agent\tests\fixtures\cubemx-basic\docs\chip\STM32F407VGTx\documents`
+- Documents directory: `tests/fixtures/cubemx-basic/docs/chip/STM32F407VGTx/documents`
 
 ## Required Documents
 

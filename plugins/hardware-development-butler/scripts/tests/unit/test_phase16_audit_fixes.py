@@ -30,10 +30,10 @@ def test_segger_jlink_rejects_jdk_path(tmp_path: Path) -> None:
     import vendor_adapters
 
     jdk_paths = [
-        "C:/Program Files/Eclipse Adoptium/jdk-21/bin/JLink.exe",
-        "D:/java/temurin/bin/JLink.exe",
+        "/opt/eclipse-adoptium/jdk-21/bin/JLink.exe",
+        "/opt/java/temurin/bin/JLink.exe",
         "/usr/local/zulu/bin/JLink",
-        "C:/Users/me/.jdks/corretto/bin/JLink.exe",
+        "/home/me/.jdks/corretto/bin/JLink.exe",
         "/opt/adoptium/bin/JLink",
     ]
     for jdk_path in jdk_paths:
@@ -47,7 +47,7 @@ def test_segger_jlink_accepts_real_segger_path(tmp_path: Path) -> None:
     """A genuine SEGGER install path passes through unchanged."""
     import vendor_adapters
 
-    real_path = "C:/Program Files/SEGGER/JLink_V796b/JLink.exe"
+    real_path = "/opt/SEGGER/JLink_V796b/JLink.exe"
     with patch("vendor_adapters.shutil.which", return_value=real_path):
         assert vendor_adapters._segger_jlink() == real_path
 

@@ -11,6 +11,8 @@ import shutil
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "tools"))
 
@@ -18,6 +20,11 @@ import firmware_project_scaffold as fps  # noqa: E402
 
 FIXTURE = REPO_ROOT / "tests" / "fixtures" / "cubemx-basic"
 TMP = REPO_ROOT / "tests" / "tmp" / "firmware-scaffold"
+
+
+@pytest.fixture(autouse=True)
+def isolated_projects(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys.modules[__name__], "TMP", tmp_path)
 
 
 def copy_fixture(name: str) -> Path:
@@ -76,8 +83,8 @@ def test_ensure_compilable_integrates_into_cubemx_user_code_blocks() -> None:
         "    /* USER CODE BEGIN 2 */\n"
         "    /* USER CODE END 2 */\n"
         "    while (1) {\n"
-        "    /* USER CODE BEGIN 4 */\n"
-        "    /* USER CODE END 4 */\n"
+        "    /* USER CODE BEGIN 3 */\n"
+        "    /* USER CODE END 3 */\n"
         "    }\n"
         "}\n",
         encoding="utf-8",
@@ -105,7 +112,7 @@ def test_ensure_compilable_leaves_custom_main_untouched() -> None:
     main_c.write_text(original, encoding="utf-8")
     result = fps.ensure_compilable(project, part="STM32F407VGTx", module="led_blink")
 
-    assert result["status"] == "ok"
+    assert result["status"] == "needs-manual-integration"
     assert result["main_c_class"] == "custom"
     assert main_c.read_text(encoding="utf-8") == original
     assert any("left untouched" in action for action in result["actions"])

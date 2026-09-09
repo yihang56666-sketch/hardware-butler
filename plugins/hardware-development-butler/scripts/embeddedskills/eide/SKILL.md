@@ -24,7 +24,7 @@ skill 目录下的 `config.json` 包含环境级配置，首次使用前确认 `
 
 ```json
 {
-  "builder_dir": "C:\\Users\\<user>\\.vscode\\extensions\\cl.eide-<version>\\res\\tools\\win32\\unify_builder",
+  "builder_dir": "<user-home>/.vscode/extensions/cl.eide-<version>/res/tools/win32/unify_builder",
   "builder_exe": "unify_builder.exe",
   "code_exe": "code",
   "toolchain_prefix": "arm-none-eabi-",
@@ -181,7 +181,7 @@ python <skill-dir>/scripts/eide_size.py compare \
 
 ## 与 Keil 工程的关系
 
-本项目中的 EIDE 工程与 Keil MDK 工程共享相同的源码和 ARM CC 工具链（`D:\Keil_V543\ARM\ARMCLANG`）。EIDE 工程通过 `eide.yml` 描述工程结构，`builder.params` 由 EIDE 自动生成并供 `unify_builder` 使用。两者的构建产物（.axf/.hex/.elf）格式兼容，可互换使用。
+本项目中的 EIDE 工程与 Keil MDK 工程共享相同的源码和 ARM CC 工具链（`<Keil-install-root>/ARM/ARMCLANG`）。EIDE 工程通过 `eide.yml` 描述工程结构，`builder.params` 由 EIDE 自动生成并供 `unify_builder` 使用。两者的构建产物（.axf/.hex/.elf）格式兼容，可互换使用。
 
 ## 参考
 

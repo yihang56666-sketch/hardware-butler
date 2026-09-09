@@ -70,7 +70,7 @@ def test_firmware_plan_keeps_rtos_when_platformio_supports_freertos(
     state = _prepared_state(project, "stm32")
     adapter = vendor_adapters.get_adapter("stm32")
     assert adapter is not None
-    with patch.object(adapter, "find_pio", return_value="C:/fake/pio.exe"):
+    with patch.object(adapter, "find_pio", return_value="/opt/fake/pio.exe"):
         result = wr._stage_firmware_plan(project, state["context"], state)
     assert result.status == "completed"
     patch_ev = result.evidence["firmware_patch"]
@@ -95,7 +95,7 @@ def test_firmware_plan_downgrades_rtos_for_unsupported_pio_family(
     state = _prepared_state(project, "esp32")
     adapter = vendor_adapters.get_adapter("esp32")
     assert adapter is not None
-    with patch.object(adapter, "find_pio", return_value="C:/fake/pio.exe"):
+    with patch.object(adapter, "find_pio", return_value="/opt/fake/pio.exe"):
         result = wr._stage_firmware_plan(project, state["context"], state)
     assert result.status == "completed"
     patch_ev = result.evidence["firmware_patch"]

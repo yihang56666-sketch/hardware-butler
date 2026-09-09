@@ -13,6 +13,7 @@ from typing import Any
 import cubemx_ioc_summary
 import evidence_index
 import project_brain
+import project_scanner
 
 PIN_RE = re.compile(r"\bP[A-K](?:[0-9]|1[0-5])\b", re.IGNORECASE)
 PERIPHERAL_RE = re.compile(r"\b(?:I2C|SPI|USART|UART|CAN|ADC|TIM)\d+\b", re.IGNORECASE)
@@ -216,6 +217,8 @@ def ioc_summaries(root: Path, index: dict[str, Any]) -> list[dict[str, Any]]:
         if not isinstance(item, dict) or item.get("kind") != "cubemx_ioc":
             continue
         path = root / str(item.get("path", ""))
+        if not project_scanner.is_project_file(root, path):
+            continue
         try:
             summaries.append(cubemx_ioc_summary.summarize(path))
         except OSError:
@@ -227,10 +230,9 @@ def ioc_line_citations(root: Path, summary: dict[str, Any], prefixes: list[str])
     path = Path(str(summary.get("ioc_file", "")))
     if not path.is_absolute():
         path = root / path
-    try:
-        rel_path = path.resolve().relative_to(root.resolve()).as_posix()
-    except ValueError:
-        rel_path = str(path)
+    if not project_scanner.is_project_file(root, path):
+        return []
+    rel_path = path.resolve().relative_to(root.resolve()).as_posix()
     try:
         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
@@ -244,6 +246,7 @@ def ioc_line_citations(root: Path, summary: dict[str, Any], prefixes: list[str])
 
 
 def search_indexed_text(root: Path, index: dict[str, Any], question: str) -> list[dict[str, Any]]:
+    root = root.resolve()
     tokens = query_tokens(question)
     if not tokens:
         return []
@@ -252,7 +255,11 @@ def search_indexed_text(root: Path, index: dict[str, Any], question: str) -> lis
         if not isinstance(item, dict):
             continue
         path = root / str(item.get("path", ""))
-        if path.suffix.lower() not in TEXT_SUFFIXES or not path.exists() or safe_size(path) > MAX_TEXT_BYTES:
+        if (
+            path.suffix.lower() not in TEXT_SUFFIXES
+            or not project_scanner.is_project_file(root, path)
+            or safe_size(path) > MAX_TEXT_BYTES
+        ):
             continue
         try:
             lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -265,7 +272,7 @@ def search_indexed_text(root: Path, index: dict[str, Any], question: str) -> lis
                 continue
             matches.append(
                 {
-                    "path": str(path.relative_to(root).as_posix()),
+                    "path": path.resolve().relative_to(root).as_posix(),
                     "line": line_no,
                     "note": f"keyword match score={score}",
                     "text": line.strip()[:240],

@@ -21,7 +21,7 @@ def _workflow_run(**overrides: object) -> dict[str, object]:
         "status": "completed",
         "conclusion": "success",
         "head_sha": "abc",
-        "html_url": "https://github.com/yihang56666-sketch/NextBoard/actions/runs/1",
+        "html_url": "https://github.com/yihang56666-sketch/hardware-butler/actions/runs/1",
     }
     payload.update(overrides)
     return payload
@@ -30,7 +30,7 @@ def _workflow_run(**overrides: object) -> dict[str, object]:
 def test_build_report_is_ok_when_remote_metadata_and_ci_match() -> None:
     report = github_launch_audit.build_report(
         owner=github_launch_audit.DEFAULT_OWNER,
-        repo="NextBoard",
+        repo=github_launch_audit.DEFAULT_REPO,
         branch="main",
         workflow="ci.yml",
         local_sha="abc",
@@ -76,7 +76,7 @@ def test_build_report_uses_owner_repo_homepage() -> None:
 def test_build_report_reports_push_metadata_and_ci_gaps() -> None:
     report = github_launch_audit.build_report(
         owner=github_launch_audit.DEFAULT_OWNER,
-        repo="NextBoard",
+        repo=github_launch_audit.DEFAULT_REPO,
         branch="main",
         workflow="ci.yml",
         local_sha="local",
@@ -110,7 +110,7 @@ def test_build_report_can_include_push_permission_preflight() -> None:
 
     report = github_launch_audit.build_report(
         owner=github_launch_audit.DEFAULT_OWNER,
-        repo="NextBoard",
+        repo=github_launch_audit.DEFAULT_REPO,
         branch="main",
         workflow="ci.yml",
         local_sha="abc",
@@ -183,7 +183,7 @@ def test_check_push_permission_ok(monkeypatch) -> None:
 def test_build_report_reports_stale_ci_commit() -> None:
     report = github_launch_audit.build_report(
         owner=github_launch_audit.DEFAULT_OWNER,
-        repo="NextBoard",
+        repo=github_launch_audit.DEFAULT_REPO,
         branch="main",
         workflow="ci.yml",
         local_sha="new-sha",
@@ -227,7 +227,7 @@ def test_workflow_run_must_match_expected_commit() -> None:
 def test_human_report_prints_next_actions_for_errors(capsys) -> None:
     report = github_launch_audit.build_report(
         owner=github_launch_audit.DEFAULT_OWNER,
-        repo="NextBoard",
+        repo=github_launch_audit.DEFAULT_REPO,
         branch="main",
         workflow="ci.yml",
         local_sha="local",
@@ -244,7 +244,7 @@ def test_human_report_prints_next_actions_for_errors(capsys) -> None:
     assert "next: Set the GitHub About description" in output
     assert "next: Add these GitHub repository topics" in output
     assert "Suggested GitHub CLI commands:" in output
-    assert "gh repo edit yihang56666-sketch/NextBoard `" in output
+    assert "gh repo edit yihang56666-sketch/hardware-butler `" in output
     assert f'--description "{github_launch_audit.EXPECTED_DESCRIPTION}"' in output
     assert f'--homepage "{github_launch_audit.EXPECTED_HOMEPAGE}"' in output
     assert "--add-topic stm32" in output
@@ -263,7 +263,7 @@ def test_print_settings_does_not_contact_git_or_github(monkeypatch, capsys) -> N
 
     output = capsys.readouterr().out
     assert exit_code == 0
-    assert "GitHub launch settings: yihang56666-sketch/NextBoard" in output
+    assert "GitHub launch settings: yihang56666-sketch/hardware-butler" in output
     assert github_launch_audit.EXPECTED_DESCRIPTION in output
     assert github_launch_audit.EXPECTED_HOMEPAGE in output
     assert "Suggested GitHub CLI commands:" in output
@@ -283,7 +283,7 @@ def test_print_settings_json(monkeypatch, capsys) -> None:
 
     payload = json.loads(capsys.readouterr().out)
     assert exit_code == 0
-    assert payload["repository"] == "yihang56666-sketch/NextBoard"
+    assert payload["repository"] == "yihang56666-sketch/hardware-butler"
     assert payload["description"] == github_launch_audit.EXPECTED_DESCRIPTION
     assert payload["homepage"] == github_launch_audit.EXPECTED_HOMEPAGE
     assert payload["topics"] == sorted(github_launch_audit.EXPECTED_TOPICS)

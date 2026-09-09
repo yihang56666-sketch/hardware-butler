@@ -1,0 +1,4 @@
+extend = "../pyproject.toml"
+
+[lint.pep8-naming]
+ignore-names = ["closeEvent"]

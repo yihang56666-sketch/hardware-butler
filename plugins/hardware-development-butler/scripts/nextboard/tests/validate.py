@@ -18,6 +18,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import unquote, urlsplit
 
 # ── colour helpers ──────────────────────────────────────────────────
 GREEN = "\033[92m"
@@ -121,6 +122,11 @@ OUTPUT_TEMPLATE_SECTIONS = [
     "验证计划",
     "风险清单",
     "原理图",         # "模块原理图"
+    "已确定",
+    "待确认",
+    "高风险",
+    "门控记录",
+    "证据定位",
 ]
 
 REVIEWER_DIMENSIONS = [
@@ -184,6 +190,12 @@ def check_structure(root: Path, installed: bool):
         else:
             fail(f"references/{ref} missing")
 
+    for relative in ("scripts/md_to_pdf.py", "agents/openai.yaml"):
+        if (skill_dir / relative).is_file():
+            ok(f"{relative} exists")
+        else:
+            fail(f"{relative} missing")
+
     if not installed:
         agent = root / "agents" / "hardware-reviewer.md"
         if agent.is_file():
@@ -245,20 +257,25 @@ def check_hook_output(root: Path):
 # ── Layer 2: content consistency ────────────────────────────────────
 
 def check_cross_references(skill_dir: Path):
-    """Layer 2a: SKILL.md internal links resolve to real files."""
+    """Check local link targets in the skill and its first-party references."""
     print("\n── Layer 2a: Cross-references ──")
     skill_md = skill_dir / "SKILL.md"
     if not skill_md.is_file():
         fail("cannot check cross-references: SKILL.md missing")
         return
-    text = skill_md.read_text(encoding="utf-8")
-    links = re.findall(r'\[.*?\]\((.*?)\)', text)
-    for link in links:
-        target = (skill_dir / link).resolve()
-        if target.is_file():
-            ok(f"link resolves: {link}")
-        else:
-            fail(f"broken link in SKILL.md: {link}")
+    documents = [skill_md, *sorted((skill_dir / "references").glob("*.md"))]
+    for document in documents:
+        text = document.read_text(encoding="utf-8")
+        links = re.findall(r'\[.*?\]\((.*?)\)', text)
+        for link in links:
+            parsed = urlsplit(link)
+            if parsed.scheme or parsed.netloc or not parsed.path:
+                continue
+            target = (document.parent / unquote(parsed.path)).resolve()
+            if target.is_file():
+                ok(f"{document.name} link resolves: {link}")
+            else:
+                fail(f"broken link in {document.name}: {link}")
 
 
 def check_gates_nonempty(skill_dir: Path):
@@ -300,10 +317,7 @@ def check_output_template_sections(skill_dir: Path):
 def check_reviewer_dimensions(root: Path, installed: bool):
     """Layer 2d: reviewer agent covers all 5 dimensions."""
     print("\n── Layer 2d: Reviewer dimensions ──")
-    if installed:
-        warn("reviewer agent not checked in installed mode")
-        return
-    agent = root / "agents" / "hardware-reviewer.md"
+    agent = (root.parents[1] if installed else root) / "agents" / "hardware-reviewer.md"
     if not agent.is_file():
         fail("hardware-reviewer.md missing")
         return
@@ -479,22 +493,25 @@ def main():
     parser.add_argument(
         "root",
         nargs="?",
-        default=str(default_root),
+        default=None,
         help=f"repo root or skill directory (default: {default_root})",
     )
     parser.add_argument("--installed", action="store_true",
-                        help="validate installed copy at ~/.claude/skills/hardware-solution")
+                        help="validate an installed skill directory; explicit root takes precedence")
+    parser.add_argument("--platform", choices=("claude", "codex"), default="claude",
+                        help="default installation directory when --installed is used without root")
     args = parser.parse_args()
 
     if args.installed:
-        root = Path.home() / ".claude" / "skills" / "hardware-solution"
+        root = Path(args.root).expanduser().resolve() if args.root else Path.home() / f".{args.platform}" / "skills" / "hardware-solution"
         installed = True
     else:
-        root = Path(args.root).resolve()
+        root = Path(args.root).expanduser().resolve() if args.root else default_root
         installed = False
 
     print(f"Validating: {root}")
     print(f"Mode: {'installed copy' if installed else 'repo source'}")
+    print("Scope: static source structure/content only; not datasheet, EDA, hardware, or release certification.")
 
     skill_dir = check_structure(root, installed)
 
@@ -521,7 +538,7 @@ def main():
         print(f"\n{RED}Validation failed.{RESET}")
         sys.exit(1)
     else:
-        print(f"\n{GREEN}All checks passed.{RESET}")
+        print(f"\n{GREEN}All static checks passed; design gates still require recorded evidence and review.{RESET}")
         sys.exit(0)
 
 

@@ -86,12 +86,12 @@ D. 自定义输入：___
 - 海外候选：说明生态优势、参考设计、认证资料、价格和交期风险。
 - 混合候选：说明哪些模块必须稳妥、哪些模块可以国产化，以及替代验证成本。
 
-每个推荐的关键 IC 和功能模块器件附带采购参考链接，优先级：国内电商平台（淘宝/立创商城/嘉立创） > 授权分销商 > 原厂官网。以方便个人购买为主。同时提供 datasheet 下载链接（优先 AllDatasheet > 立创商城 > 半导小芯 > 原厂官网）和封装文件下载链接（优先立创 EDA 封装库/华秋 DFM 封装库 > 嘉立创封装库 > SnapEDA/Ultra Librarian > 原厂）。无法提供时标注"需联网查证"。
+每个推荐的关键 IC 和功能模块器件附带采购、datasheet 和封装文件链接。资料权威性和查证顺序统一为：**原厂官网 > 授权分销商 > 元器件平台 > 聚合站**。采购便利性不能替代来源质量；聚合站仅作线索，必须回溯原厂版本、型号、封装和页码。封装文件对照原厂机械图核验，无法确认时标"待核/需联网查证"，不补猜测参数。
 
 器件分层：
 - 关键 IC（需提供链接和资料）：MCU、PMIC、收发器、传感器、ADC/DAC 等核心芯片
 - 功能模块器件（需提供链接和资料）：晶振、连接器、ESD/TVS 保护、存储芯片、负载开关、LDO 等
-- 被动元件（不需要提供）：电阻、电容、电感等通用规格件，EDA 库中通常已有
+- 被动元件（可不逐一下载）：通用阻容感；关键耐压、精度、额定值仍需证据或标待核
 
 **输出文件：** `docs/hardware/03-components.md`
 
@@ -99,21 +99,21 @@ D. 自定义输入：___
 
 Gate 3 通过后，先询问用户使用的 EDA 工具（KiCad / Altium Designer / 立创 EDA / 其他），然后批量下载已选的关键 IC 和功能模块器件的 datasheet 和对应格式的封装文件。被动元件不下载（EDA 库中通常已有）。
 
-**下载经验记录：** 下载前先读取 [download-sources.md](download-sources.md)，优先使用已验证的源。下载成功后将器件型号、源站点、URL、日期追加到该文件。下载失败也记录到"已知失败源"表，避免后续重复尝试同一个失败源。
+**下载经验记录：** 下载前读取 [download-sources.md](download-sources.md) 的只读模板和项目内 `docs/hardware/download-sources.md`。成功或失败的记录均写入项目文件，不修改共享技能；记录 URL、文件 hash、版本、型号/封装、页码、日期和核验状态。
 
-**Datasheet 下载策略（严格按顺序尝试，禁止跳过前序源）：**
+**Datasheet 下载策略（先核实来源，再下载）：**
 
-1. AllDatasheet（alldatasheet.com）— 直链 PDF，无反爬，优先使用
-2. 立创商城（lcsc.com）器件详情页的 datasheet 链接
-3. 半导小芯（semiee.com）— 国内 datasheet 聚合站
-4. 原厂官网 — 仅在前三个源都无法获取时才尝试
+1. 原厂官网资料下载页和已核实的官方 PDF
+2. 授权分销商的规格书附件
+3. 元器件平台附件，核对原厂和版本
+4. AllDatasheet、半导小芯等聚合站，仅作候选线索，不因下载成功就视为已验证
 
 **反爬/下载失败处理规则：**
 
 - 如果某个源返回 HTML 页面而非 PDF，立即跳过该源，尝试下一个
 - 如果某个源需要登录、验证码或动态 JS 渲染，立即跳过，不要重试
-- ST、TI、NXP、Mouser、DigiKey 等原厂/分销商站点大概率有反爬限制，应排在最后尝试
-- 所有源都失败时，在 `03-components.md` 中标注"需手动下载"并附上最可能成功的页面 URL（优先 AllDatasheet 搜索链接）
+- 不预先断言某厂商不可访问；只记录本次实际失败原因，不绕过登录、验证码或其他访问限制
+- 所有源都失败时，在 `03-components.md` 中标注"需手动下载"并附原厂或已核实的候选页面 URL；参数继续标待核
 - 禁止保存非 PDF 文件（HTML、重定向页面）到 datasheets 目录
 
 **封装文件下载策略（严格按顺序）：**
@@ -189,18 +189,18 @@ KiCad 和立创 EDA 格式依赖对应的 MCP Server 在当前环境中可用。
 
 **回退规则：** 如果用户选择了 KiCad 或立创 EDA 格式，但当前环境没有对应的 MCP Server，提示用户安装对应 MCP Server，并自动回退到结构化连接表输出。
 
-用户选择展示方式和需要覆盖的模块范围后，按选定方式输出。每个模块标注：器件型号、引脚连接、电源轨、关键参数值（电阻/电容值、电压/电流）。通过 Gate 6 后交付。
+用户选择展示方式和需要覆盖的模块范围后，按选定方式输出。每个模块标注：器件型号、引脚连接、电源轨、关键参数值及来源；无证据的值只标待核，不能宣称可直接制板。Gate 6 为可选门控：用户未请求原理图时记录不适用；已请求时通过后方可交付对应成果。
 
 **输出文件：** `docs/hardware/07-schematics.md`（连接表/ASCII）或 `docs/hardware/07-schematics.d2`（D2）或 `docs/hardware/07-schematics.kicad_sch`（KiCad）或 `docs/hardware/07-schematics.json`（立创 EDA）
 
 ## 9. PDF 报告输出
 
-所有阶段完成后，将 `docs/hardware/` 目录下的全部 markdown 文件合并输出为 PDF 报告。
+以完成门控记录和评审的 `docs/hardware/hardware-solution.md` 为唯一正文输出 PDF。若门控未通过，标题和封面必须标明待核草案，不得用 PDF 的生成成功代替方案验证。
 
 脚本位于本技能目录下 `scripts/md_to_pdf.py`（即与 SKILL.md 同级的 `scripts/` 目录）。
 
 ```bash
-python3 <skill_root>/scripts/md_to_pdf.py --merge docs/hardware/ docs/hardware/hardware-solution.pdf --title "项目名称-硬件方案报告" --theme green
+python3 <skill_root>/scripts/md_to_pdf.py docs/hardware/hardware-solution.md docs/hardware/hardware-solution.pdf --title "项目名称-硬件方案报告" --theme green
 ```
 
 可选配色方案（`--theme`）：
@@ -210,8 +210,8 @@ python3 <skill_root>/scripts/md_to_pdf.py --merge docs/hardware/ docs/hardware/h
 
 生成前询问用户偏好的配色方案。
 
-脚本依赖：`pip install weasyprint markdown`
+脚本依赖：`python -m pip install weasyprint markdown`；WeasyPrint 的原生渲染库和中文字体需另行验证，最小 CLI 安装不保证具备 PDF 环境。安装依赖须先取得用户授权。
 
-PDF 包含封面（项目名称、日期）、自动分页、页眉页脚、表格样式。合并顺序按文件名排序（01-requirements.md → 06-decisions.md），确保阶段顺序正确。
+`--merge` 仍是脚本的便利选项，但只可用于已人工筛选的独立目录；它按文件名收集所有 Markdown，不理解文件是否已评审，也会混入计划、旧汇总或来源登记。脚本不渲染 Mermaid/D2 图，需先导出图像或改用连接表。交付前检查 PDF 每页的中文、表格、分页和图示；不能渲染时注明未视觉验证。
 
 **输出文件：** `docs/hardware/hardware-solution.pdf`

@@ -232,7 +232,12 @@ def argv_uses_trusted_workflow_run(argv: list[str]) -> bool:
         return False
     script = Path(str(argv[1]))
     try:
-        return bool(script.resolve() == trusted)
+        interpreter = Path(str(argv[0]))
+        return bool(
+            interpreter.is_absolute()
+            and interpreter.resolve() == Path(sys.executable).resolve()
+            and script.resolve() == trusted
+        )
     except (OSError, RuntimeError):
         return False
 

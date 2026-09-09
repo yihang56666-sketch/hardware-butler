@@ -1,5 +1,8 @@
 # Hardware Butler 硬件 Agent HR 面试指导书
 
+更新：2026-09-07。GUI 为 13 个 tab；完整测试口径以最近实测 1017 passed、12 skipped，并在 Windows 非 UTF-8 子进程输出与资源泄漏告警均视为错误的情况下运行通过。插件镜像已移除硬编码个人安装路径，并通过 4/4 包内校验。真实板卡仍未在本材料中证明。
+
+
 ## 一句话介绍
 
 Hardware Butler 是一个安全优先的嵌入式开发助手，把一句话硬件需求编排成需求解析、芯片选择、资料搜集、CubeMX 配置、固件生成、构建、烧录、观测和目标验证的 9 阶段工作流。
@@ -10,12 +13,12 @@ Hardware Butler 是一个安全优先的嵌入式开发助手，把一句话硬�
 - 支持 STM32、ESP32、MSP430、AVR、Nordic、RISC-V、TI、Renesas、NXP、Microchip、Maxim 等厂商族，并将 GD32/CH32 映射到 STM32 兼容路径。
 - LLM provider 支持 host-agent、Anthropic、OpenAI 和 local；HTTP 调用对 429/5xx/网络错误指数退避，认证和参数错误不重试。
 - 行为验证按 expected regex/范围、expected text、频率测量、kind 关键词和 QEMU 仿真分层；真实烧录必须同时满足环境变量、确认 token、值域检查和产物校验。
-- PyQt6 GUI 提供 13 个 tab，CLI 提供 36+ 子命令；插件副本可由同步脚本校验。
+- PyQt6 GUI 提供 13 个 tab，CLI 提供 35 个扁平子命令；插件副本可由同步脚本校验。
 
 ## 可演示路径
 
 ```powershell
-cd D:\一些有用的项目\硬件agent
+cd <repo-root>
 python -m pip install -e .
 python tools\hardware_butler.py guide --root tests\fixtures\cubemx-basic
 python tools\hardware_butler.py workflow-run --root tests\fixtures\cubemx-basic --mock --json
@@ -24,7 +27,7 @@ ruff check tools/ tests/
 mypy tools/ --config-file mypy.ini
 ```
 
-验证结果：ruff 通过，mypy 对 72 个源文件无问题，单元测试 739 通过、4 skipped。真实板卡、探针、编译器和供电环境不是当前环境可证明的范围。
+验证结果：ruff 通过，mypy 对 72 个源文件无问题，完整测试 1017 通过、12 skipped；本次还修复命令执行器在子进程完成与超时路径上的 stdout/stderr 管道泄漏，并把完整套件放在 `-W error` 下重跑通过。插件镜像通过 `validate_package.py` 4/4。真实板卡、探针、编译器和供电环境不是当前环境可证明的范围。
 
 ## HR 常问与回答
 

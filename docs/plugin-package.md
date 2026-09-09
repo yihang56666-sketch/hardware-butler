@@ -31,8 +31,8 @@ python plugins\hardware-development-butler\skills\hardware-development-butler\sc
 ```powershell
 python plugins\hardware-development-butler\scripts\validate_package.py
 python plugins\hardware-development-butler\scripts\tests\validate_hardware_butler.py
-python C:\Users\35182\.codex\skills\.system\skill-creator\scripts\quick_validate.py plugins\hardware-development-butler\skills\hardware-development-butler
-python C:\Users\35182\.codex\skills\.system\plugin-creator\scripts\validate_plugin.py plugins\hardware-development-butler
+python <user-home>/.codex/skills/.system/skill-creator/scripts/quick_validate.py plugins/hardware-development-butler/skills/hardware-development-butler
+python <user-home>/.codex/skills/.system/plugin-creator/scripts/validate_plugin.py plugins/hardware-development-butler
 ```
 
 官方 `quick_validate.py` 和 `validate_plugin.py` 依赖 PyYAML；如果当前 Python 缺少 `yaml`，先给验证环境安装 `PyYAML`，或只跑包内的 `validate_package.py` 做结构检查。

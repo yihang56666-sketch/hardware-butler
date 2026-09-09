@@ -99,7 +99,7 @@ def artifact_items(root: Path, scan_data: dict[str, Any]) -> list[dict[str, Any]
             if not isinstance(raw_item, dict):
                 continue
             rel_path = str(raw_item.get("path") or "")
-            if not rel_path:
+            if not rel_path or not project_scanner.is_project_file(root, root / rel_path):
                 continue
             rows.append(evidence_item(root, rel_path, kind, int(raw_item.get("size_bytes", 0) or 0)))
     return rows
@@ -108,7 +108,7 @@ def artifact_items(root: Path, scan_data: dict[str, Any]) -> list[dict[str, Any]
 def extra_evidence_items(root: Path) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for path in root.rglob("*"):
-        if project_scanner.should_skip(path.relative_to(root)) or not path.is_file():
+        if project_scanner.should_skip(path.relative_to(root)) or not project_scanner.is_project_file(root, path):
             continue
         rel_path = path.relative_to(root).as_posix()
         kind = extra_kind(path.name)

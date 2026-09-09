@@ -30,16 +30,16 @@ description: "Use when the user needs embedded hardware architecture, MCU/SoC se
 1. 读取 [references/design-workflow.md](references/design-workflow.md)，按阶段推进，不要跳过需求冻结和风险澄清。
 2. 先给用户一个"需求澄清选择题"：用 2-4 个具体选项确认优先级、成本/功耗/周期取向、国内/海外/混合供应链偏好。**专业模式下：所有标记为"待确认"的约束项必须逐一向用户确认，不能默认跳过或自行假设。每次只问 1 个问题，等用户回复后再问下一个，严禁一次性列出多个问题。每个问题必须提供具体选项 + 一个"自定义输入"选项，让用户可以填写自己的答案。** **快速模式下：列出需求表和假设清单，用户可一次性确认或修改，无需逐项问答。** 用户选择或授权基于假设推进后，才能进入深入选型。
 3. 如果是从零设计，先输出 3 类候选架构并比较取舍：国产芯片/国产供应链优先、海外主流生态优先、混合折中方案。若某类不适用，必须说明原因；如果是评审已有方案，直接进入风险审查和改进建议。
-4. 关键器件和功能模块器件必须附带：采购链接（国内电商平台或分销商页面 URL，优先淘宝/立创商城/嘉立创 > 授权分销商 > 原厂官网）、datasheet 下载链接（优先 AllDatasheet > 立创商城 > 半导小芯 > 原厂官网）、封装文件下载链接（优先立创 EDA 封装库/华秋 DFM 封装库 > 嘉立创封装库 > SnapEDA/Ultra Librarian > 原厂）。无法提供时标注"需联网查证"。被动元件（电阻、电容、电感等通用规格件）不需要提供链接和资料下载。
+4. 关键器件和功能模块器件必须附带采购链接、datasheet 下载链接、封装文件下载链接。资料权威性和查证顺序统一为：**原厂官网 > 授权分销商 > 元器件平台 > 聚合站**。采购便利性不等于参数可信度；聚合站仅作线索，必须交叉验证型号、封装、版本和页码。封装库也须对照原厂机械图验证引脚编号和尺寸。无法查证时标注"待核/需联网查证"，不凭记忆填写参数。被动元件可不逐一下载，但关键耐压、精度、额定值仍需来源或标待核。
    - 关键 IC：MCU、PMIC、收发器、传感器、ADC/DAC 等核心芯片
    - 功能模块器件：晶振、连接器、ESD/TVS 保护、存储芯片、负载开关、LDO 等
-5. Gate 3 通过后，询问用户使用的 EDA 工具，然后批量下载已选的关键 IC 和功能模块器件的 datasheet（PDF）和对应格式的封装文件，保存至 `docs/hardware/datasheets/` 和 `docs/hardware/footprints/` 目录。被动元件不下载（EDA 库中通常已有）。**下载前先读取 [references/download-sources.md](references/download-sources.md)，优先使用已验证的源；下载成功后将新记录追加到该文件；下载失败也记录到"已知失败源"避免重复尝试。** 必须严格按优先级顺序尝试下载源（AllDatasheet > 立创 > 半导小芯 > 原厂），禁止直接跳到原厂站点。遇到反爬、动态页面、非 PDF 响应时立即跳过该源尝试下一个，全部失败则标注"需手动下载"并附可用链接。禁止保存非 PDF 文件到 datasheets 目录。
+5. Gate 3 通过后，确认用户使用的 EDA 工具和下载授权，再下载已选的关键 IC 和功能模块器件资料，保存至用户项目的 `docs/hardware/datasheets/` 和 `docs/hardware/footprints/`。下载前读取 [references/download-sources.md](references/download-sources.md) 的只读登记模板；记录写入项目的 `docs/hardware/download-sources.md`，不要修改已安装的共享技能。优先使用已核实的原厂或授权分销商来源。遇到登录、验证码、动态页面或非 PDF 响应时记录失败并尝试其他授权可访问来源；不得绕过访问限制。全部失败则标注"需手动下载"，不能宣称资料已验证。
 6. 需要交付正式方案时，使用 [references/output-template.md](references/output-template.md) 的结构输出。
 7. 需要评审原理图、PCB、BOM 或量产风险时，读取 [references/review-checklists.md](references/review-checklists.md)。
 8. 涉及关键芯片选型、供应链、认证或替代料时，读取 [references/sourcing-and-risk.md](references/sourcing-and-risk.md)；涉及国产芯片、国内元器件渠道或国产替代时，同时读取 [references/domestic-sources.md](references/domestic-sources.md)。
 9. 每个阶段结束前，读取 [references/verification-gates.md](references/verification-gates.md) 确认门控通过。
 10. 评审通过后询问用户是否需要输出模块原理图。如果用户确认需要，先提供展示方式选项供用户选择（结构化连接表 / ASCII 框图 / D2 图表 / KiCad 原理图文件 .kicad_sch / 立创 EDA JSON），然后按用户选择的方式和指定的模块范围输出。**KiCad 原理图和立创 EDA JSON 需要对应的 MCP Server 支持（如 kicad-mcp、mcp-kicad-sch-api 或 jlceda-mcp），通过 MCP 工具调用 EDA 的 API 完成器件放置、连线和标注，避免直接生成原始文件格式。如果当前环境没有可用的 EDA MCP Server，自动回退到结构化连接表。** 通过 Gate 6 后交付。
-11. 所有阶段完成后，将 `docs/hardware/` 目录下的全部 markdown 文件合并输出为 PDF 报告。运行 `python3 <skill_root>/scripts/md_to_pdf.py --merge docs/hardware/ docs/hardware/hardware-solution.pdf --title "项目名称-硬件方案报告" --theme green`（`<skill_root>` 为本技能所在目录，即包含 SKILL.md 的目录）。脚本支持 `--theme green|blue|gray` 选择配色方案（默认 green），生成前询问用户偏好。
+11. 正式交付以已评审的 `docs/hardware/hardware-solution.md` 为唯一正文，运行 `python3 <skill_root>/scripts/md_to_pdf.py docs/hardware/hardware-solution.md docs/hardware/hardware-solution.pdf --title "项目名称-硬件方案报告" --theme green`。不要无差别合并同目录的计划、来源登记、历史报告和汇总，避免重复或把未审核内容混入交付。脚本依赖及视觉检查见 [references/design-workflow.md](references/design-workflow.md)。
 
 ## 文件输出规则
 
@@ -57,7 +57,7 @@ description: "Use when the user needs embedded hardware architecture, MCU/SoC se
 | 8. 模块原理图 | `07-schematics.md` / `.d2` / `.kicad_sch` / `.json` | 按用户选择的方式输出 |
 | 9. PDF 报告 | `hardware-solution.pdf` | 合并所有阶段产出为完整 PDF |
 
-交付正式方案时（步骤 5），同时按 output-template 结构输出完整方案文件 `hardware-solution.md`。
+交付正式方案时，按 output-template 结构输出完整方案文件 `hardware-solution.md`，保留决策分类、证据定位和门控记录。静态校验通过不是硬件方案通过验证门的证明。
 
 每个文件顶部包含项目名称、日期、阶段编号。后续阶段更新时追加或覆盖对应文件。
 
@@ -71,7 +71,7 @@ description: "Use when the user needs embedded hardware architecture, MCU/SoC se
 
 ## 反模式（不要做）
 
-- 不要凭记忆给出器件型号、参数、价格或库存信息。必须联网查证或明确标注为假设。
+- 不要凭记忆给出器件参数、价格或库存信息。无法查证时只标待核；用户授权的需求假设不能代替器件证据。
 - 不要跳过需求冻结直接选型。缺失的约束会导致后期返工。
 - 不要只列器件清单而不解释架构取舍。"用了什么"不等于"为什么这样设计"。
 - 不要输出泛泛描述（"选择合适的 MCU""使用低功耗方案"）。必须给出具体型号、参数和理由。
@@ -111,9 +111,9 @@ description: "Use when the user needs embedded hardware architecture, MCU/SoC se
 
 ## 验证门控
 
-每个阶段结束前，读取 [references/verification-gates.md](references/verification-gates.md) 中对应的门控检查项。未通过的项不能进入下一阶段。
+每个阶段结束前，读取 [references/verification-gates.md](references/verification-gates.md) 中对应的门控检查项。Gate 1–5 是必需门控；Gate 6 仅适用于用户请求模块原理图的情况，否则记录不适用及原因。未通过的门控不得标为通过或发布为已验证方案，只能交付明确标注的待核草案。
 
-完成方案输出后进行独立评审：如果当前平台支持 agents，使用 `hardware-reviewer` agent；如果不支持，则按 [../../agents/hardware-reviewer.md](../../agents/hardware-reviewer.md) 的五个维度在当前会话内自检。评审发现的 CONCERN 和 FAIL 项必须处理或标注为待确认后才能交付。
+完成方案输出后进行独立评审：平台支持时使用 `hardware-reviewer`；否则按 [../../agents/hardware-reviewer.md](../../agents/hardware-reviewer.md) 的五个维度自检，并明确记录"非独立自检，待人工复核"。复制 reviewer Markdown 不等于客户端已注册可调度的 agent。自检不得冒充独立评审；FAIL 必须关闭，CONCERN 必须有责任人、验证动作和截止点后才能申请最终复核。
 
 ## 交接关系
 

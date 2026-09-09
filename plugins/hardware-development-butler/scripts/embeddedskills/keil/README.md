@@ -24,7 +24,7 @@ Claude Code skill，驱动 Keil MDK 进行工程扫描、Target 枚举、编译�
 
 ```json
 {
-  "uv4_exe": "C:\\Keil_v5\\UV4\\UV4.exe",
+  "uv4_exe": "<Keil-install-root>/UV4/UV4.exe",
   "operation_mode": 1
 }
 ```

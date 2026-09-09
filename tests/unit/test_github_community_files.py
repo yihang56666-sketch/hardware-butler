@@ -10,6 +10,18 @@ from tools.github_launch_audit import EXPECTED_DESCRIPTION, EXPECTED_HOMEPAGE, E
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
+def test_root_install_and_release_metadata_point_to_the_hardware_butler_repository() -> None:
+    from tools.github_launch_audit import DEFAULT_REPOSITORY
+
+    repository = "yihang56666-sketch/hardware-butler"
+    assert DEFAULT_REPOSITORY == repository
+    metadata = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    install = (REPO_ROOT / "docs" / "INSTALL.md").read_text(encoding="utf-8")
+    assert f'Repository = "https://github.com/{repository}"' in metadata
+    assert f"git clone https://github.com/{repository}.git" in install
+    assert "cd hardware-butler" in install
+
+
 def test_root_community_files_are_present() -> None:
     if not (REPO_ROOT / ".github").is_dir():
         pytest.skip("GitHub community files are only required in the root repository")

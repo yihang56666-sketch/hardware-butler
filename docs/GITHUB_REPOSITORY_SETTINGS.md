@@ -13,7 +13,7 @@ A safety-first embedded hardware copilot that turns board evidence, CubeMX proje
 Homepage:
 
 ```text
-https://github.com/yihang56666-sketch/NextBoard#readme
+https://github.com/yihang56666-sketch/hardware-butler#readme
 ```
 
 Topics:
@@ -25,11 +25,11 @@ embedded, hardware, stm32, cubemx, firmware, freertos, jlink, openocd, probe-rs,
 Optional GitHub CLI commands:
 
 ```powershell
-gh repo edit yihang56666-sketch/NextBoard `
+gh repo edit yihang56666-sketch/hardware-butler `
   --description "A safety-first embedded hardware copilot that turns board evidence, CubeMX projects, firmware plans, and bench bring-up into clear, gated next steps." `
-  --homepage "https://github.com/yihang56666-sketch/NextBoard#readme"
+  --homepage "https://github.com/yihang56666-sketch/hardware-butler#readme"
 
-gh repo edit yihang56666-sketch/NextBoard `
+gh repo edit yihang56666-sketch/hardware-butler `
   --add-topic embedded `
   --add-topic hardware `
   --add-topic stm32 `

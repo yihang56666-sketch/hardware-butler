@@ -431,17 +431,17 @@ def test_segger_jlink_rejects_jdk_paths() -> None:
     import vendor_adapters.ra  # noqa: F401
     import vendor_adapters.rx  # noqa: F401
     # JDK path — must be rejected.
-    with patch("vendor_adapters.shutil.which", return_value="C:/Program Files/Java/jdk-17/bin/JLink.exe"):
+    with patch("vendor_adapters.shutil.which", return_value="/opt/java/jdk-17/bin/JLink.exe"):
         assert vendor_adapters._segger_jlink() == ""
     # Temurin path — must be rejected.
-    with patch("vendor_adapters.shutil.which", return_value="C:/adoptium/temurin-17/bin/JLink.exe"):
+    with patch("vendor_adapters.shutil.which", return_value="/opt/adoptium/temurin-17/bin/JLink.exe"):
         assert vendor_adapters._segger_jlink() == ""
     # Zulu path — must be rejected.
-    with patch("vendor_adapters.shutil.which", return_value="C:/zulu/bin/JLink.exe"):
+    with patch("vendor_adapters.shutil.which", return_value="/opt/zulu/bin/JLink.exe"):
         assert vendor_adapters._segger_jlink() == ""
     # Real SEGGER path — must be accepted.
-    with patch("vendor_adapters.shutil.which", return_value="C:/Program Files/SEGGER/JLink/JLink.exe"):
-        assert vendor_adapters._segger_jlink() == "C:/Program Files/SEGGER/JLink/JLink.exe"
+    with patch("vendor_adapters.shutil.which", return_value="/opt/SEGGER/JLink/JLink.exe"):
+        assert vendor_adapters._segger_jlink() == "/opt/SEGGER/JLink/JLink.exe"
 
 
 def test_ra_adapter_uses_segger_jlink_guard_for_jlink_detection() -> None:
@@ -453,7 +453,7 @@ def test_ra_adapter_uses_segger_jlink_guard_for_jlink_detection() -> None:
     adapter = vendor_adapters.get_adapter("ra")
     assert adapter is not None
     # JDK path present — JLink.exe must report False, not True.
-    with patch("vendor_adapters.shutil.which", return_value="C:/Program Files/Java/jdk-17/bin/JLink.exe"):
+    with patch("vendor_adapters.shutil.which", return_value="/opt/java/jdk-17/bin/JLink.exe"):
         tools = adapter.detect_tools()
     assert tools["JLink.exe"] is False
     assert tools["JLinkExe"] is False
@@ -464,7 +464,7 @@ def test_imxrt_adapter_uses_segger_jlink_guard() -> None:
     from unittest.mock import patch
     adapter = vendor_adapters.get_adapter("imxrt")
     assert adapter is not None
-    with patch("vendor_adapters.shutil.which", return_value="C:/adoptium/temurin-17/bin/JLink.exe"):
+    with patch("vendor_adapters.shutil.which", return_value="/opt/adoptium/temurin-17/bin/JLink.exe"):
         tools = adapter.detect_tools()
     assert tools["JLink.exe"] is False
 
@@ -473,7 +473,7 @@ def test_lpc_adapter_uses_segger_jlink_guard() -> None:
     from unittest.mock import patch
     adapter = vendor_adapters.get_adapter("lpc")
     assert adapter is not None
-    with patch("vendor_adapters.shutil.which", return_value="C:/zulu/bin/JLink.exe"):
+    with patch("vendor_adapters.shutil.which", return_value="/opt/zulu/bin/JLink.exe"):
         tools = adapter.detect_tools()
     assert tools["JLink.exe"] is False
 
@@ -482,7 +482,7 @@ def test_max32_adapter_uses_segger_jlink_guard() -> None:
     from unittest.mock import patch
     adapter = vendor_adapters.get_adapter("max32")
     assert adapter is not None
-    with patch("vendor_adapters.shutil.which", return_value="C:/Program Files/Java/jdk-17/bin/JLink.exe"):
+    with patch("vendor_adapters.shutil.which", return_value="/opt/java/jdk-17/bin/JLink.exe"):
         tools = adapter.detect_tools()
     assert tools["JLink.exe"] is False
 
@@ -491,6 +491,6 @@ def test_rx_adapter_uses_segger_jlink_guard() -> None:
     from unittest.mock import patch
     adapter = vendor_adapters.get_adapter("rx")
     assert adapter is not None
-    with patch("vendor_adapters.shutil.which", return_value="C:/Program Files/Java/jdk-17/bin/JLink.exe"):
+    with patch("vendor_adapters.shutil.which", return_value="/opt/java/jdk-17/bin/JLink.exe"):
         tools = adapter.detect_tools()
     assert tools["JLink.exe"] is False

@@ -6,8 +6,8 @@ docs, tests, Codex plugin runtime, and embedded backend mirror together.
 ## Recommended: Source Workspace
 
 ```powershell
-git clone https://github.com/yihang56666-sketch/NextBoard.git
-cd NextBoard
+git clone https://github.com/yihang56666-sketch/hardware-butler.git
+cd hardware-butler
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
@@ -82,7 +82,7 @@ The backend runtime is resolved in this order:
 Use an external checkout when you want to work directly on the backend repo:
 
 ```powershell
-$env:HW_BUTLER_EMBEDDEDSKILLS_ROOT="D:\path\to\embeddedskills"
+$env:HW_BUTLER_EMBEDDEDSKILLS_ROOT="<path-to-embeddedskills>"
 python tools\hardware_butler.py doctor --root <project-root> --json
 ```
 

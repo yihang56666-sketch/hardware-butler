@@ -1,10 +1,8 @@
-"""Tests: workflow build/flash real-backend branches (safety-gated).
+"""Offline tests for build routing and fail-closed physical workflow requests.
 
-These are the exact code paths a real-board day takes: the flash stage's
-HARDWARE_BUTLER_ENABLE_REAL_FLASH block (probe-rs preferred, adapter native
-fallback, embeddedskills script fallback) and the no-adapter build fallback
-through the embeddedskills script map. Subprocesses are mocked — the safety
-gate itself (env var + goal token) runs for real.
+Subprocesses and adapter methods are mocked. Environment opt-in plus a
+workflow goal token must not bypass hardware_action_executor authorization.
+These tests do not validate a physical board or enable a real backend.
 """
 
 from __future__ import annotations
@@ -85,105 +83,42 @@ def real_flash_env(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.delenv("HARDWARE_BUTLER_ENABLE_REAL_FLASH", raising=False)
 
 
-def test_flash_real_backend_probe_rs_success(tmp_path: Path, real_flash_env) -> None:
+@pytest.mark.parametrize(
+    ("chip_family", "probe", "probe_command", "subprocess_status"),
+    [
+        ("stm32", "", ["probe-rs", "download", "build/firmware.elf"], "ok"),
+        ("stm32", "", ["probe-rs", "download", "build/firmware.elf"], "error"),
+        ("stm32", "stlink-v3", [], "ok"),
+        (None, "cmsis-dap", [], "ok"),
+    ],
+    ids=["probe-available", "probe-error", "native-available", "embeddedskills-available"],
+)
+def test_flash_real_backend_requires_reviewed_executor(
+    tmp_path: Path, real_flash_env, chip_family, probe, probe_command, subprocess_status
+) -> None:
     project = tmp_path / "proj"
     project.mkdir()
-    ctx, state = _state_with_stages(project)
+    ctx, state = _state_with_stages(project, chip_family=chip_family, probe=probe)
     import vendor_adapters
 
     adapter = vendor_adapters.get_adapter("stm32")
     assert adapter is not None
-    probe_cmd = ["probe-rs", "download", "--verify", "build/firmware.elf"]
-    with patch("bench_runbook.generate_runbook", return_value={"action_plan": {"steps": []}}):
-        with patch.object(adapter, "flash_via_probe_rs", return_value=probe_cmd):
-            with patch(
-                "workflow_runner._run_subprocess",
-                return_value={"status": "ok", "returncode": 0, "stdout": "downloaded", "stderr": ""},
-            ) as run:
-                result = wr._stage_flash(project, ctx, state)
-    assert result.status == "completed"
-    assert result.evidence["flash_executed"] is True
-    assert result.evidence["flash_backend"] == "probe-rs"
-    assert run.call_args.args[0] == probe_cmd
-    # goal token was consumed by the gated action
-    assert state["goal_token"]["uses"] >= 1
-
-
-def test_flash_real_backend_probe_rs_failure_falls_through_then_fails(tmp_path: Path, real_flash_env) -> None:
-    """probe-rs failure must NOT strand the flash chain: the adapter native
-    command gets its attempt, and the stage still fails honestly when every
-    backend fails (regression: `if not flash_result` gated the fallbacks on a
-    truthy-but-failed result dict, so a failed probe-rs run blocked them)."""
-    project = tmp_path / "proj"
-    project.mkdir()
-    ctx, state = _state_with_stages(project)
-    import vendor_adapters
-
-    adapter = vendor_adapters.get_adapter("stm32")
-    assert adapter is not None
-    with patch("bench_runbook.generate_runbook", return_value={"action_plan": {"steps": []}}):
-        with patch.object(adapter, "flash_via_probe_rs", return_value=["probe-rs", "download", "--verify", "build/firmware.elf"]):
-            with patch.object(adapter, "flash_command", return_value=["pyocd", "flash", "build/firmware.elf"]) as native:
-                with patch("workflow_runner._run_embeddedskills_script", return_value={"status": "error", "returncode": 1, "stdout": "", "stderr": "no backend"}):
-                    with patch("workflow_runner._run_subprocess", return_value={"status": "error", "returncode": 1, "stdout": "", "stderr": "no probe"}):
-                        result = wr._stage_flash(project, ctx, state)
-    assert result.status == "failed"
+    with (
+        patch("bench_runbook.generate_runbook", return_value={"action_plan": {"steps": []}}),
+        patch.object(adapter, "flash_via_probe_rs", return_value=probe_command) as probe_run,
+        patch.object(adapter, "flash_command", return_value=["pyocd", "flash", "build/firmware.elf"]) as native,
+        patch("workflow_runner._run_embeddedskills_script", return_value={"status": "ok"}) as script,
+        patch("workflow_runner._run_subprocess", return_value={"status": subprocess_status}) as run,
+    ):
+        result = wr._stage_flash(project, ctx, state)
+    assert result.status == "blocked-needs-input"
     assert result.evidence["flash_executed"] is False
-    # probe-rs was attempted first, then the chain advanced: stm32 native
-    # (proven by native.called), finally the chip-stage's embeddedskills
-    # backend ("openocd") is the last attempt recorded in the evidence.
-    assert result.evidence["flash_backend"] == "openocd"
-    assert native.called
-
-
-def test_flash_real_backend_adapter_native_fallback(tmp_path: Path, real_flash_env) -> None:
-    """probe-rs absent -> adapter native flash_command (pyOCD for stlink)."""
-    project = tmp_path / "proj"
-    project.mkdir()
-    ctx, state = _state_with_stages(project, probe="stlink-v3")
-    import vendor_adapters
-
-    adapter = vendor_adapters.get_adapter("stm32")
-    assert adapter is not None
-    with patch("bench_runbook.generate_runbook", return_value={"action_plan": {"steps": []}}):
-        with patch.object(adapter, "flash_via_probe_rs", return_value=[]):
-            with patch.object(
-                adapter, "flash_command", return_value=["pyocd", "flash", "--target", "STM32F407VGT6", "build/firmware.elf"]
-            ) as native:
-                with patch(
-                    "workflow_runner._run_subprocess",
-                    return_value={"status": "ok", "returncode": 0, "stdout": "flashed", "stderr": ""},
-                ) as run:
-                    result = wr._stage_flash(project, ctx, state)
-    assert result.status == "completed"
-    assert result.evidence["flash_backend"] == "stm32"
-    assert result.evidence["flash_executed"] is True
-    native.assert_called_once()
-    assert run.call_args.args[0][0] == "pyocd"
-
-
-def test_flash_real_backend_embeddedskills_fallback(tmp_path: Path, real_flash_env) -> None:
-    """No vendor adapter at all -> embeddedskills script from chip evidence."""
-    project = tmp_path / "proj"
-    project.mkdir()
-    ctx, state = _state_with_stages(project, chip_family=None, probe="cmsis-dap")
-    captured: dict[str, object] = {}
-
-    def fake_script(script: str, args: list[str], *, timeout_s: int = 120) -> dict:
-        captured["script"] = script
-        captured["args"] = args
-        return {"status": "ok", "stdout": "flashed", "stderr": ""}
-
-    with patch("bench_runbook.generate_runbook", return_value={"action_plan": {"steps": []}}):
-        with patch("workflow_runner._run_embeddedskills_script", side_effect=fake_script):
-            result = wr._stage_flash(project, ctx, state)
-    assert result.status == "completed"
-    assert result.evidence["flash_backend"] == "openocd"
-    assert captured["script"] == "openocd/scripts/openocd_run.py"
-    args = captured["args"]
-    assert "--action" in args and "flash" in args
-    assert "--target" in args  # target from chip-selection evidence
-    assert "--probe" in args  # probe from context
+    assert result.evidence["flash_result"]["status"] == "blocked-real-backend-not-enabled"
+    assert "hardware_action_executor" in result.error
+    probe_run.assert_not_called()
+    native.assert_not_called()
+    script.assert_not_called()
+    run.assert_not_called()
 
 
 def test_flash_real_backend_exhausted_token_blocks_execution(tmp_path: Path, real_flash_env) -> None:

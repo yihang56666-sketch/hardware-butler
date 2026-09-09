@@ -88,7 +88,7 @@ def workspace_root(explicit: Path | None = None) -> Path:
 ```bash
 $ python -c "import sys; sys.path.insert(0, 'tools'); \
   import runtime_context; print(runtime_context.workspace_root())"
-D:\项目\硬件agent  # ✅ 返回包根目录
+<repo-root>  # ✅ 返回包根目录
 ```
 
 ### 1.5 文档生成

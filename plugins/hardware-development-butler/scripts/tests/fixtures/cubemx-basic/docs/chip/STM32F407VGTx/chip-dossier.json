@@ -3,8 +3,8 @@
   "status": "ok",
   "part": "STM32F407VGTx",
   "board": "",
-  "out_dir": "D:\\一些有用的项目\\硬件agent\\tests\\fixtures\\cubemx-basic\\docs\\chip\\STM32F407VGTx",
-  "documents_dir": "D:\\一些有用的项目\\硬件agent\\tests\\fixtures\\cubemx-basic\\docs\\chip\\STM32F407VGTx\\documents",
+  "out_dir": "tests/fixtures/cubemx-basic/docs/chip/STM32F407VGTx",
+  "documents_dir": "tests/fixtures/cubemx-basic/docs/chip/STM32F407VGTx/documents",
   "documents": [],
   "required_documents": [
     {

@@ -40,7 +40,7 @@ def inspect_project(root: Path, out_dir: Path) -> dict[str, Any]:
         ioc_path = root / item["path"]
         try:
             summary = cubemx_ioc_summary.summarize(ioc_path)
-        except OSError as exc:
+        except (OSError, ValueError) as exc:
             summary = {
                 "ioc_file": str(ioc_path),
                 "error": str(exc),
@@ -56,13 +56,20 @@ def inspect_project(root: Path, out_dir: Path) -> dict[str, Any]:
     write_json(profiles_dir / "board-profile.json", board_profile)
 
     if ioc_summaries:
-        write_text(out_dir / "cubemx-ioc-summary.md", cubemx_ioc_summary.render_markdown(ioc_summaries[0]))
-        write_json(profiles_dir / "cubemx-ioc-summary.json", ioc_summaries[0])
+        primary_summary = ioc_summaries[0]
+        summary_markdown = (
+            f"# CubeMX IOC Summary\n\nInspection error: {primary_summary['error']}\n"
+            if primary_summary.get("error") else cubemx_ioc_summary.render_markdown(primary_summary)
+        )
+        write_text(out_dir / "cubemx-ioc-summary.md", summary_markdown)
+        write_json(profiles_dir / "cubemx-ioc-summary.json", primary_summary)
 
     ensure_log_files(out_dir)
+    errors = [summary for summary in ioc_summaries if summary.get("error")]
 
     return {
-        "status": "ok",
+        "status": "partial" if errors else "ok",
+        "errors": errors,
         "root": str(root),
         "out_dir": str(out_dir),
         "generated": [

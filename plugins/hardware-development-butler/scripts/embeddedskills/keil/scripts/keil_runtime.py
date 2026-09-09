@@ -208,12 +208,15 @@ def _auto_detect_uv4() -> str:
     candidates = [
         which("UV4.exe"),
         which("UV4"),
-        r"C:\Keil_v5\UV4\UV4.exe",
-        r"C:\Keil_v5\ARM\UV4\UV4.exe",
     ]
     keil_root = os.environ.get("KEIL_ROOT", "")
     if keil_root:
-        candidates.append(str(Path(keil_root) / "UV4" / "UV4.exe"))
+        candidates.extend(
+            [
+                str(Path(keil_root) / "UV4" / "UV4.exe"),
+                str(Path(keil_root) / "ARM" / "UV4" / "UV4.exe"),
+            ]
+        )
     for candidate in candidates:
         if candidate and Path(candidate).is_file():
             return str(Path(candidate).resolve())

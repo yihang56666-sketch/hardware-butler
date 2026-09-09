@@ -13,11 +13,12 @@ The adapter prefers whatever is available on the host. observe uses serial
 from __future__ import annotations
 
 import shutil
+from pathlib import Path
 from typing import Any
 
 from vendor_adapters import VendorAdapter, _segger_jlink, register_adapter
 
-from . import jlink_flash_command, serial_monitor_command
+from . import jlink_flash_command, openocd_flash_command, serial_monitor_command
 
 
 class STM32Adapter(VendorAdapter):
@@ -62,11 +63,15 @@ class STM32Adapter(VendorAdapter):
         return ""
 
     def build_command(self, ctx: dict[str, Any]) -> list[str]:
-        project_root = ctx.get("project_root", ".")
-        build_dir = ctx.get("build_dir", "build")
-        if shutil.which("cmake") and shutil.which("ninja"):
-            return ["cmake", "-S", str(project_root), "-B", build_dir, "-G", "Ninja"]
-        return ["arm-none-eabi-gcc", "--version"]
+        project_root = Path(ctx.get("project_root", ".")).resolve()
+        build_dir = Path(ctx.get("build_dir", "build"))
+        if not build_dir.is_absolute():
+            build_dir = project_root / build_dir
+        if shutil.which("cmake") and (build_dir / "CMakeCache.txt").is_file():
+            return ["cmake", "--build", str(build_dir)]
+        if shutil.which("make") and (project_root / "Makefile").is_file():
+            return ["make", "-C", str(project_root)]
+        return []
 
     def canonical_chip(self, part: str) -> str:
         """Map an orderable part number to the pyOCD/probe-rs chip name.
@@ -112,8 +117,7 @@ class STM32Adapter(VendorAdapter):
                 args[2] = f"port=SWD index={port}"
             return args
         if tool == "openocd":
-            args = ["openocd", "-f", "interface/stlink.cfg", "-c", f"program {elf} reset exit"]
-            return args
+            return openocd_flash_command("interface/stlink.cfg", elf, verify=False)
         if tool in ("JLink.exe", "JLinkExe"):
             # 裸交互式 J-Link 只会挂起直到超时且烧不进任何镜像。
             if not target:

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import difflib
+import hashlib
 import json
 import re
 import sys
@@ -249,6 +250,7 @@ def target_result(path: Path, original: str, updated: str, insertions: list[dict
         reason = "All requested insertions are inside CubeMX USER CODE blocks." if changed else "Insertions already present."
     return {
         "path": str(path),
+        "source_sha256": hashlib.sha256(original.encode("utf-8")).hexdigest(),
         "status": status,
         "reason": reason,
         "diff_preview": unified_diff(original, updated, fromfile=str(path), tofile=f"{path} (integrated)"),
@@ -321,7 +323,7 @@ def write_integration_patch(preview: dict[str, Any], *, confirm_write: bool) -> 
             safe_io.safe_write_text(
                 path,
                 updated,
-                allowed_roots=runtime_context.allowed_write_roots(Path(preview["root"])),
+                allowed_roots=[Path(preview["root"]).resolve()],
                 backup_existing=True,
             )
         )
@@ -334,6 +336,8 @@ def write_integration_patch(preview: dict[str, Any], *, confirm_write: bool) -> 
 def validate_integration_current_state(preview: dict[str, Any]) -> None:
     root = Path(str(preview.get("root") or ".")).resolve()
     module = str(preview.get("module") or "")
+    if not re.fullmatch(r"[a-z0-9_]+", module):
+        raise ValueError("invalid firmware module in integration preview")
     missing_app = missing_app_files(root, module)
     if missing_app:
         raise ValueError(f"app module changed since preview; missing files: {[str(path) for path in missing_app]}")
@@ -341,8 +345,10 @@ def validate_integration_current_state(preview: dict[str, Any]) -> None:
         if target.get("status") not in {"ready-to-write"} or not target.get("changed"):
             continue
         path = Path(str(target.get("path") or ""))
-        safe_io.validate_write_path(path, allowed_roots=runtime_context.allowed_write_roots(root))
+        validate_patch_target(path, root, {root / "Core/Src/main.c", root / "Core/Src/freertos.c"})
         text = path.read_text(encoding="utf-8", errors="replace")
+        if hashlib.sha256(text.encode("utf-8")).hexdigest() != target.get("source_sha256"):
+            raise ValueError(f"integration file changed since preview: {path}; regenerate the preview")
         missing = [item.get("block", "") for item in target.get("insertions", []) if not user_code_block_exists(text, str(item.get("block", "")))]
         if missing:
             raise ValueError(f"USER CODE block(s) changed since preview in {path}: {', '.join(missing)}")
@@ -965,9 +971,31 @@ def render_integration_note(module: str, plan: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def validate_patch_target(path: Path, root: Path, allowed_paths: set[Path]) -> Path:
+    original = path.absolute()
+    if original not in allowed_paths:
+        raise ValueError(f"Refusing unlisted firmware patch target: {path}")
+    safe_io.reject_symlink_path(original)
+    target: Path = safe_io.validate_write_path(original, allowed_roots=[root])
+    if target != original:
+        raise ValueError(f"Refusing redirected firmware patch target: {path}")
+    return target
+
+
 def write_patch(preview: dict[str, Any], *, confirm_write: bool) -> dict[str, Any]:
     if not confirm_write:
         raise ValueError("firmware patch writing requires --confirm-write")
+    root = Path(preview["root"]).resolve()
+    module = str(preview.get("module") or "")
+    if not re.fullmatch(r"[a-z0-9_]+", module):
+        raise ValueError("invalid firmware module in patch preview")
+    allowed_paths = {
+        root / "Core" / "Inc" / f"app_{module}.h",
+        root / "Core" / "Src" / f"app_{module}.c",
+        root / "docs" / "firmware-patches" / f"app_{module}.md",
+    }
+    for item in preview["files"]:
+        validate_patch_target(Path(item["path"]), root, allowed_paths)
     written = []
     for item in preview["files"]:
         path = Path(item["path"])
@@ -975,7 +1003,7 @@ def write_patch(preview: dict[str, Any], *, confirm_write: bool) -> dict[str, An
             safe_io.safe_write_text(
                 path,
                 item["content"],
-                allowed_roots=runtime_context.allowed_write_roots(Path(preview["root"])),
+                allowed_roots=[root],
                 backup_existing=True,
             )
         )

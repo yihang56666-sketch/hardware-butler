@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
+import stat
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -19,10 +21,16 @@ EXCLUDED_DIRS = {
     ".mypy_cache",
     ".ruff_cache",
     "node_modules",
+    ".venv",
+    "venv",
+    ".hardware-butler",
+    ".claude",
+    "output",
 }
 EXCLUDED_DOC_RUNTIME_DIRS = {"inspections", "chip"}
 EXCLUDED_RUNTIME_PARTS = {("tests", "tmp")}
-EXCLUDED_SUFFIXES = {".pyc", ".pyo"}
+EXCLUDED_SUFFIXES = {".pyc", ".pyo", ".pem", ".key", ".pfx", ".p12", ".sqlite", ".sqlite3", ".db"}
+EXCLUDED_PRIVATE_FILES = {".env", "credentials.json", "auth.json", "settings.local.json"}
 MANAGED_RUNTIME_ITEMS = {
     ".codex",
     "AGENTS.md",
@@ -43,6 +51,32 @@ MANAGED_RUNTIME_ITEMS = {
 MANAGED_PLUGIN_SKILLS = {
     "chip-bringup",
 }
+PUBLIC_RUNTIME_DOCS = {
+    "ARCHITECTURE_MAP.md",
+    "AUTO_WORKFLOW_GUI.md",
+    "BEGINNER_GUIDE.md",
+    "COMMANDS.md",
+    "FEATURES_AND_USAGE.md",
+    "GITHUB_LAUNCH_CHECKLIST.md",
+    "GITHUB_REPOSITORY_SETTINGS.md",
+    "HARDWARE_UNDERSTANDING.md",
+    "HR_PROJECT_GUIDE.md",
+    "INSTALL.md",
+    "OPEN_SOURCE_INTEGRATION.md",
+    "PROGRESS.md",
+    "PROJECT_PORTFOLIO_AUDIT.md",
+    "README.md",
+    "REAL_BOARD_DAY_RUNBOOK.md",
+    "RELEASE_PROCESS.md",
+    "START_HERE.md",
+    "VS_TRADITIONAL_WORKFLOW.md",
+    "WORKBENCH_FEATURE_COVERAGE.md",
+    "WORKBENCH_TUTORIAL.md",
+    "WORKFLOW_RUNNER_DESIGN.md",
+}
+MACHINE_PATH_PATTERN = re.compile(
+    r"(?<![A-Za-z/\\])[A-Za-z]:[\\/]+(?:Users[\\/]+)?[^`|\s]*", re.IGNORECASE
+)
 ENV_EMBEDDEDSKILLS_ROOT = "HW_BUTLER_EMBEDDEDSKILLS_ROOT"
 EMBEDDEDSKILLS_REQUIRED_FILES = (
     "safety_gate.py",
@@ -56,35 +90,108 @@ def should_ignore(path: Path) -> bool:
         return True
     if path.suffix.lower() in EXCLUDED_SUFFIXES:
         return True
+    if path.name.lower() in EXCLUDED_PRIVATE_FILES:
+        return True
+    if path.name.startswith(".tmp") or path.name.endswith(".tmp"):
+        return True
+    if path.name.startswith(".env.") and path.name not in {".env.example", ".env.sample", ".env.template"}:
+        return True
     return False
 
 
+def reject_path_links(path: Path) -> None:
+    for candidate in (path.absolute(), *path.absolute().parents):
+        try:
+            metadata = candidate.lstat()
+        except FileNotFoundError:
+            continue
+        attributes = getattr(metadata, "st_file_attributes", 0)
+        if stat.S_ISLNK(metadata.st_mode) or attributes & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400):
+            raise ValueError(f"Package paths must not contain a link or reparse point: {candidate}")
+
+
+def require_contained_path(path: Path, root: Path) -> None:
+    reject_path_links(root)
+    reject_path_links(path)
+    if not path.resolve().is_relative_to(root.resolve()):
+        raise ValueError(f"Package path is outside the managed root: {path}")
+
+
 def copy_tree(src: Path, dst: Path) -> None:
-    for path in src.rglob("*"):
-        rel = path.relative_to(src)
-        if any(part in EXCLUDED_DIRS for part in rel.parts):
-            continue
-        if (src.name, *rel.parts[:1]) in EXCLUDED_RUNTIME_PARTS:
-            continue
-        if src.name == "docs" and rel.parts and rel.parts[0] in EXCLUDED_DOC_RUNTIME_DIRS:
-            continue
+    reject_path_links(src)
+    reject_path_links(dst)
+
+    files: list[tuple[Path, Path]] = []
+
+    def collect_files(current: Path) -> None:
+        for path in sorted(current.iterdir()):
+            if should_ignore(path):
+                continue
+            rel = path.relative_to(src)
+            if (src.name, *rel.parts[:1]) in EXCLUDED_RUNTIME_PARTS:
+                continue
+            if src.name == "docs" and rel.parts and rel.parts[0] in EXCLUDED_DOC_RUNTIME_DIRS:
+                continue
+            reject_path_links(path)
+            if path.is_dir():
+                collect_files(path)
+            elif path.is_file():
+                assert_public_file(path)
+                files.append((path, rel))
+
+    collect_files(src)
+    for source, rel in files:
         target = dst / rel
-        if path.is_dir():
-            target.mkdir(parents=True, exist_ok=True)
-            continue
-        if should_ignore(path):
-            continue
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(path, target)
+        require_contained_path(target, dst)
+        copy_file(source, target)
+
+
+def assert_public_file(path: Path) -> None:
+    """Reject machine-specific paths in any text file entering the plugin."""
+    data = path.read_bytes()
+    if b"\0" in data:
+        return
+    text = data.decode("utf-8", errors="replace")
+    for line_number, line in enumerate(text.splitlines(), start=1):
+        if MACHINE_PATH_PATTERN.search(line):
+            raise ValueError(
+                f"Machine-specific path in public package text: {path}:{line_number}: {line.strip()}"
+            )
 
 
 def copy_file(src: Path, dst: Path) -> None:
+    reject_path_links(src)
+    reject_path_links(dst)
     dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(src, dst)
 
 
+def assert_public_text(path: Path) -> None:
+    """Reject machine-specific paths before files enter the public plugin mirror."""
+    text = path.read_text(encoding="utf-8", errors="replace")
+    for line_number, line in enumerate(text.splitlines(), start=1):
+        if MACHINE_PATH_PATTERN.search(line):
+            raise ValueError(
+                f"Machine-specific path in public package text: {path}:{line_number}: {line.strip()}"
+            )
+
+
+def copy_public_docs(source: Path, destination: Path) -> None:
+    destination.mkdir(parents=True, exist_ok=True)
+    for name in sorted(PUBLIC_RUNTIME_DOCS):
+        source_doc = source / name
+        if not source_doc.exists():
+            continue
+        reject_path_links(source_doc)
+        assert_public_text(source_doc)
+        copy_file(source_doc, destination / name)
+
+
 def clear_managed_runtime_payload(preserve: set[str] | None = None) -> None:
     preserve = preserve or set()
+    for name in MANAGED_RUNTIME_ITEMS:
+        if name not in preserve:
+            require_contained_path(RUNTIME_ROOT / name, RUNTIME_ROOT)
     for name in MANAGED_RUNTIME_ITEMS:
         if name in preserve:
             continue
@@ -97,9 +204,11 @@ def clear_managed_runtime_payload(preserve: set[str] | None = None) -> None:
 
 def clear_runtime_directory(path: Path) -> None:
     """Remove packaged files while leaving local test/cache state alone."""
+    require_contained_path(path, RUNTIME_ROOT)
     for child in path.iterdir():
         if should_ignore(child):
             continue
+        require_contained_path(child, RUNTIME_ROOT)
         if child.is_dir():
             shutil.rmtree(child)
         else:
@@ -113,6 +222,8 @@ def sync_project_skills() -> list[str]:
         dst = PLUGIN_ROOT / "skills" / name
         if not src.exists():
             continue
+        reject_path_links(src)
+        require_contained_path(dst, PLUGIN_ROOT / "skills")
         if dst.exists():
             shutil.rmtree(dst)
         copy_tree(src, dst)
@@ -163,11 +274,8 @@ def package_runtime() -> list[str]:
         copy_tree(embeddedskills_src, RUNTIME_ROOT / "embeddedskills")
         copied.append(f"embeddedskills/ (from {embeddedskills_source})")
 
-    docs_dst = RUNTIME_ROOT / "docs"
-    docs_dst.mkdir(parents=True, exist_ok=True)
-    for doc in sorted((REPO_ROOT / "docs").glob("*.md")):
-        copy_file(doc, docs_dst / doc.name)
-        copied.append(f"docs/{doc.name}")
+    copy_public_docs(REPO_ROOT / "docs", RUNTIME_ROOT / "docs")
+    copied.extend(f"docs/{name}" for name in sorted(PUBLIC_RUNTIME_DOCS) if (REPO_ROOT / "docs" / name).exists())
 
     for name in (
         "README.md",

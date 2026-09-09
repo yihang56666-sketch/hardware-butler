@@ -1,6 +1,8 @@
 """Unit tests for safe_io module."""
 
 import os
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -112,3 +114,52 @@ def test_is_relative_to_returns_false_for_sibling(tmp_path: Path):
     path2 = tmp_path / "dir2"
 
     assert not safe_io.is_relative_to(path1, path2)
+
+
+@pytest.mark.parametrize("binary", [False, True])
+def test_safe_write_preserves_preexisting_temp_hardlink(tmp_path: Path, binary: bool):
+    allowed = tmp_path / "allowed"
+    allowed.mkdir()
+    target = allowed / "state.json"
+    unrelated = tmp_path / "unrelated.txt"
+    unrelated.write_bytes(b"must stay unchanged")
+    os.link(unrelated, target.with_name(f".{target.name}.tmp"))
+
+    if binary:
+        safe_io.safe_write_bytes(target, b"new state", allowed_roots=[allowed])
+    else:
+        safe_io.safe_write_text(target, "new state", allowed_roots=[allowed])
+
+    assert target.read_bytes() == b"new state"
+    assert unrelated.read_bytes() == b"must stay unchanged"
+
+
+@pytest.mark.parametrize("binary", [False, True])
+def test_concurrent_safe_writes_have_independent_temporary_files(tmp_path: Path, monkeypatch, binary: bool):
+    target = tmp_path / "state.json"
+    barrier = threading.Barrier(2)
+    replace = os.replace
+    temporary_paths = []
+    rename_lock = threading.Lock()
+
+    def synchronized_replace(source, destination):
+        temporary_paths.append(Path(source))
+        barrier.wait(timeout=5)
+        with rename_lock:
+            return replace(source, destination)
+
+    monkeypatch.setattr(safe_io.os, "replace", synchronized_replace)
+
+    def write_state(content):
+        if binary:
+            return safe_io.safe_write_bytes(target, content.encode(), allowed_roots=[tmp_path])
+        return safe_io.safe_write_text(target, content, allowed_roots=[tmp_path])
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(write_state, content) for content in ("first", "second")]
+        results = [future.result() for future in futures]
+
+    assert results == [str(target), str(target)]
+    assert len(set(temporary_paths)) == 2
+    assert target.read_text(encoding="utf-8") in {"first", "second"}
+    assert list(tmp_path.iterdir()) == [target]

@@ -1,18 +1,7 @@
-"""Install a git pre-commit hook that re-syncs the plugin package.
+"""Install an optional plugin-sync pre-commit check without replacing user hooks.
 
-The plugins/hardware-development-butler/scripts/ directory is a packaged
-runtime copy of tools/ + embeddedskills/ + nextboard/. Without a hook,
-contributors must remember to run `python tools/package_hardware_butler
-_plugin.py` after every source change — forgetting it produces silent
-drift that the CI's `test_plugin_sync.py` only catches downstream.
-
-This installer drops a small pre-commit hook into .git/hooks/pre-commit
-that runs the packaging script. If packaging produces no diff, the hook
-exits 0 and the commit proceeds. If it produces a diff (source was
-changed but plugin not re-synced), the hook prints a warning, stashes
-the diff into the staging area, and the commit proceeds WITH the sync.
-
-Idempotent: re-running reinstalls the hook.
+Packaging can update the working-tree mirror. Any resulting changes stop the
+commit so the contributor can review and stage them explicitly.
 """
 
 from __future__ import annotations
@@ -23,42 +12,44 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 HOOK_PATH = REPO_ROOT / ".git" / "hooks" / "pre-commit"
+OWNED_MARKER = "# Auto-installed by tools/install_plugin_sync_hook.py"
 
 HOOK_BODY = """#!/usr/bin/env bash
 # Auto-installed by tools/install_plugin_sync_hook.py
-# Re-syncs the plugin package so plugins/.../scripts/ never drifts from
-# tools/ + embeddedskills/ + nextboard/. If packaging produces a diff,
-# the diff is staged into the current commit so the commit ships in sync.
 set -e
 cd "$(git rev-parse --show-toplevel)"
 
-# Only run if source files are staged (avoid no-op cost on docs-only commits).
-if ! git diff --cached --name-only | grep -E '^(tools/|embeddedskills/|nextboard/)' >/dev/null; then
-    exit 0
-fi
-
-python tools/package_hardware_butler_plugin.py >/dev/null 2>&1 || {
-    echo "[pre-commit] WARNING: plugin packaging failed; commit proceeding unsynced" >&2
-    exit 0
+python tools/package_hardware_butler_plugin.py || {
+    echo "[pre-commit] Plugin packaging failed; commit stopped." >&2
+    exit 1
 }
 
-# Stage any changed plugin files so they ship with this commit.
-git add plugins/hardware-development-butler/scripts/ || true
+if ! git diff --quiet -- plugins/hardware-development-butler/ || \
+    git ls-files --others --exclude-standard -- plugins/hardware-development-butler/ | grep -q .; then
+    echo "[pre-commit] Review and stage the regenerated plugin before committing." >&2
+    exit 1
+fi
 exit 0
 """
 
 
 def install() -> int:
     if not (REPO_ROOT / ".git").is_dir():
-        print("not a git repository — skipping hook install", file=sys.stderr)
+        print("not a regular git checkout — skipping hook install", file=sys.stderr)
+        return 1
+    if HOOK_PATH.is_symlink():
+        print(f"refusing to replace a linked hook: {HOOK_PATH}", file=sys.stderr)
+        return 1
+    if HOOK_PATH.exists() and OWNED_MARKER not in HOOK_PATH.read_text(encoding="utf-8", errors="replace"):
+        print(f"existing user hook preserved: {HOOK_PATH}", file=sys.stderr)
         return 1
     HOOK_PATH.parent.mkdir(parents=True, exist_ok=True)
     HOOK_PATH.write_text(HOOK_BODY, encoding="utf-8", newline="\n")
-    # chmod +x (Windows ignores this, but POSIX needs it)
     try:
         HOOK_PATH.chmod(HOOK_PATH.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-    except OSError:
-        pass
+    except OSError as error:
+        print(f"hook created but executable permissions could not be set: {error}", file=sys.stderr)
+        return 1
     print(f"installed pre-commit hook: {HOOK_PATH}")
     return 0
 

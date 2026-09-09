@@ -15,7 +15,7 @@ python -m pip install -e .
 普通 GitHub checkout 会优先使用插件里自带的 `embeddedskills` 运行时镜像。如果你在精简包、外部后端或本地后端开发场景下看到 `doctor` 报 `embeddedskills.runtime` 不可用，再把 embeddedskills 放在根目录 `embeddedskills/`，或设置：
 
 ```powershell
-$env:HW_BUTLER_EMBEDDEDSKILLS_ROOT="D:\path\to\embeddedskills"
+$env:HW_BUTLER_EMBEDDEDSKILLS_ROOT="<path-to-embeddedskills>"
 ```
 
 然后跑指南：

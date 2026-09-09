@@ -4,7 +4,9 @@ __pycache__/
 
 # Local agent/client state
 **/.claude/settings.local.json
+reasonix.toml
 .mimosa/
+.reasonix/
 .tmp-smoke/
 .agents/.agents/reports/
 .hardware-butler/
@@ -22,6 +24,7 @@ docs/chip/
 # Build and packaging output
 build/
 dist/
+/output/
 *.egg-info/
 
 # Python virtual environments
@@ -40,6 +43,8 @@ htmlcov/
 
 tests/.tmp-pytest/
 tests/.tmp-pytest-runtime/
+tests/.tmp-pytest-isolated/
+tests/.tmp-pytest-*
 tests/.tmp-plugin-smoke/
 tests/tmp/
 plugins/hardware-development-butler/scripts/tests/.tmp-pytest/
@@ -57,4 +62,3 @@ platformio.ini
 .tmp/
 .tmp-mypy-out.txt
 *.tmp
-

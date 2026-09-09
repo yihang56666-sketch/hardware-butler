@@ -755,6 +755,8 @@ def main(argv: list[str] | None = None) -> None:
             timeout_s=args.timeout,
         )
         output(data, as_json=args.as_json, markdown=command_runner.render_markdown(data), out=args.out)
+        if data["summary"].get("error", 0) or data["summary"].get("timeout", 0):
+            sys.exit(2)
     elif args.command == "onboard":
         root = Path(args.root)
         out_dir = Path(args.out_dir) if args.out_dir else runtime_context.default_inspection_dir(root)
@@ -1000,6 +1002,8 @@ def main(argv: list[str] | None = None) -> None:
             output({"schema_version": 1, "status": "error", "error": str(exc)}, as_json=True)
             sys.exit(2)
         output(data, as_json=args.as_json, markdown=hardware_action_executor.render_markdown(data), out=args.out)
+        if data.get("status") != "ok":
+            sys.exit(2)
     elif args.command == "safety-audit":
         data = hardware_action_audit.audit_report(Path(args.root))
         output(data, as_json=args.as_json, markdown=hardware_action_audit.render_markdown(data), out=args.out)

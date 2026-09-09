@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, "tools")
 
@@ -57,12 +58,13 @@ def test_list_adapters_includes_all_three() -> None:
     assert {"stm32", "esp32", "msp430"} <= families
 
 
-def test_stm32_adapter_build_command() -> None:
+def test_stm32_adapter_build_command(tmp_path: Path) -> None:
     adapter = vendor_adapters.get_adapter("stm32")
     assert adapter is not None
-    cmd = adapter.build_command({"project_root": "/tmp/project"})
-    assert isinstance(cmd, list)
-    assert len(cmd) > 0
+    (tmp_path / "Makefile").write_text("all:\n", encoding="utf-8")
+    with patch("vendor_adapters.stm32.shutil.which", side_effect=lambda name: name if name == "make" else None):
+        cmd = adapter.build_command({"project_root": str(tmp_path)})
+    assert cmd == ["make", "-C", str(tmp_path.resolve())]
 
 
 def test_stm32_adapter_flash_command_picks_available_tool() -> None:

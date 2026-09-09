@@ -3,37 +3,49 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
+import signal
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
-from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal
-from PyQt6.QtGui import QFont
-from PyQt6.QtWidgets import (
-    QApplication,
-    QCheckBox,
-    QComboBox,
-    QFileDialog,
-    QFrame,
-    QGridLayout,
-    QGroupBox,
-    QHBoxLayout,
-    QHeaderView,
-    QLabel,
-    QLineEdit,
-    QMainWindow,
-    QPlainTextEdit,
-    QPushButton,
-    QTableWidget,
-    QTableWidgetItem,
-    QTabWidget,
-    QTextBrowser,
-    QVBoxLayout,
-    QWidget,
-)
+try:
+    from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal
+    from PyQt6.QtGui import QCloseEvent, QFont
+    from PyQt6.QtWidgets import (
+        QApplication,
+        QCheckBox,
+        QComboBox,
+        QFileDialog,
+        QFrame,
+        QGridLayout,
+        QGroupBox,
+        QHBoxLayout,
+        QHeaderView,
+        QLabel,
+        QLineEdit,
+        QMainWindow,
+        QPlainTextEdit,
+        QPushButton,
+        QScrollArea,
+        QTableWidget,
+        QTableWidgetItem,
+        QTabWidget,
+        QTextBrowser,
+        QVBoxLayout,
+        QWidget,
+    )
+except ImportError as exc:
+    source_root = Path(__file__).resolve().parents[1]
+    raise SystemExit(
+        f"GUI dependencies unavailable: {exc}\n"
+        f'Install the source UI extra with: "{sys.executable}" -m pip install -e "{source_root}[ui]"'
+    ) from exc
 
 try:  # qt-material is packaged into the exe, but source mode should degrade gracefully.
     from qt_material import apply_stylesheet
@@ -58,6 +70,13 @@ TAB_WORKFLOW = 9
 TAB_REPORTS = 10
 TAB_TUTORIAL = 11
 TAB_OUTPUT = 12
+LOGGER = logging.getLogger(__name__)
+SAFE_ACTION_COMMANDS = {
+    "workbench", "auto", "brain", "doctor", "detect", "onboard", "propose-config",
+    "bench-runbook", "safety-audit", "plan-action", "task", "ask", "chip-dossier",
+    "advise-pin", "firmware-plan", "firmware-patch", "patch-ioc", "classify-log", "plan-build",
+    "status", "inspect",
+}
 
 
 def frozen_cli_candidates() -> list[Path]:
@@ -73,13 +92,13 @@ def frozen_cli_candidates() -> list[Path]:
 
 def find_frozen_cli() -> Path:
     for candidate in frozen_cli_candidates():
-        if candidate.exists():
+        if candidate.is_file():
             return candidate
     return APP_ROOT / CLI_EXE_NAME
 
 
 class CommandWorker(QThread):
-    finished = pyqtSignal(list, int, str, str)
+    result_ready = pyqtSignal(list, int, str, str)
 
     # A multi-stage workflow-run legitimately runs a 300s PlatformIO build +
     # flash/observe windows; a blanket 120s timeout killed the CLI child
@@ -93,27 +112,79 @@ class CommandWorker(QThread):
         self.argv = argv
         self.cwd = cwd
         self.env = env
+        self._cancel_requested = threading.Event()
         if timeout_s is None:
-            joined = " ".join(argv)
-            timeout_s = self.WORKFLOW_TIMEOUT_S if "workflow-run" in joined else self.DEFAULT_TIMEOUT_S
+            timeout_s = self.WORKFLOW_TIMEOUT_S if "workflow-run" in argv else self.DEFAULT_TIMEOUT_S
         self.timeout_s = timeout_s
 
-    def run(self) -> None:
+    def cancel(self) -> None:
+        self._cancel_requested.set()
+
+    def stop_process(self, process: subprocess.Popen) -> None:
+        if process.poll() is not None:
+            return
         try:
-            result = subprocess.run(
+            if os.name == "nt":
+                taskkill = Path(os.environ.get("SystemRoot", "C:/Windows")) / "System32" / "taskkill.exe"
+                stopped = subprocess.run(
+                    [str(taskkill), "/PID", str(process.pid), "/T", "/F"],
+                    capture_output=True, timeout=5, creationflags=subprocess.CREATE_NO_WINDOW,
+                )
+                if stopped.returncode and process.poll() is None:
+                    LOGGER.warning("Process-tree cancellation failed: %r", stopped.stderr)
+                    process.kill()
+            else:
+                os.killpg(process.pid, signal.SIGKILL)
+        except (OSError, subprocess.TimeoutExpired):
+            LOGGER.exception("Could not stop command process tree")
+            if process.poll() is None:
+                process.kill()
+
+    def run(self) -> None:
+        if self._cancel_requested.is_set():
+            self.result_ready.emit(self.argv, 130, "", "命令已取消，未启动子进程。")
+            return
+        process = None
+        try:
+            process = subprocess.Popen(
                 self.argv,
                 cwd=self.cwd,
                 shell=False,
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
                 encoding="utf-8",
                 errors="replace",
-                timeout=self.timeout_s,
                 env=self.env,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+                start_new_session=os.name != "nt",
             )
-            self.finished.emit(self.argv, result.returncode, result.stdout, result.stderr)
+            deadline = time.monotonic() + self.timeout_s
+            while True:
+                cancelled = self._cancel_requested.is_set()
+                remaining = deadline - time.monotonic()
+                if cancelled or remaining <= 0:
+                    self.stop_process(process)
+                    stdout, stderr = process.communicate(timeout=5)
+                    message = "命令已取消" if cancelled else f"命令超时（{self.timeout_s}s）"
+                    self.result_ready.emit(self.argv, 130 if cancelled else 124, stdout, f"{stderr}\n{message}；已写文件不会自动回滚。")
+                    return
+                try:
+                    stdout, stderr = process.communicate(timeout=min(0.1, remaining))
+                except subprocess.TimeoutExpired:
+                    continue
+                self.result_ready.emit(self.argv, process.returncode, stdout, stderr)
+                return
         except Exception as exc:  # pragma: no cover - UI safety net
-            self.finished.emit(self.argv, 1, "", str(exc))
+            LOGGER.exception("GUI command failed")
+            self.result_ready.emit(self.argv, 1, "", f"无法完成命令：{exc}")
+        finally:
+            if process is not None:
+                if process.poll() is None:
+                    self.stop_process(process)
+                for stream in (process.stdout, process.stderr):
+                    if stream is not None:
+                        stream.close()
 
 
 class StatusCard(QFrame):
@@ -140,6 +211,8 @@ class HardwareButlerWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.worker: CommandWorker | None = None
+        self._close_pending = False
+        self._refresh_after_command = False
         self.current_state: dict[str, Any] = {}
         self.current_workbench: dict[str, Any] = {}
         self.current_brain: dict[str, Any] = {}
@@ -151,6 +224,7 @@ class HardwareButlerWindow(QMainWindow):
         self.setWindowTitle("硬件管家工作台")
         self.resize(1360, 860)
         self.setup_ui()
+        self.project_input.textChanged.connect(self.reset_project_state)
 
     def setup_ui(self) -> None:
         central = QWidget()
@@ -177,6 +251,16 @@ class HardwareButlerWindow(QMainWindow):
         self.tabs.addTab(self.reports_tab(), "报告")
         self.tabs.addTab(self.tutorial_tab(), "教程")
         self.tabs.addTab(self.output_tab(), "输出")
+        for tab_index in range(self.tabs.count()):
+            page = self.tabs.widget(tab_index)
+            label = self.tabs.tabText(tab_index)
+            self.tabs.removeTab(tab_index)
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setFrameShape(QFrame.Shape.NoFrame)
+            scroll.setWidget(page)
+            self.tabs.insertTab(tab_index, scroll, label)
+        self.tabs.setCurrentIndex(TAB_HOME)
         root.addWidget(self.tabs, 1)
 
     def home_tab(self) -> QWidget:
@@ -191,7 +275,7 @@ class HardwareButlerWindow(QMainWindow):
         start_box = QGroupBox("今天要做什么")
         start_layout = QVBoxLayout(start_box)
         start_layout.setSpacing(10)
-        intro = QLabel("先选项目，再点一个任务。所有按钮默认只做本地安全动作，不会直接烧录、擦除、复位或在线调试。")
+        intro = QLabel("先选项目，再点一个任务。真实硬件始终禁用；联网资料搜索和可能调用 LLM/编译器的工作流需单独勾选授权。")
         intro.setObjectName("pageHint")
         intro.setWordWrap(True)
         start_layout.addWidget(intro)
@@ -334,6 +418,11 @@ class HardwareButlerWindow(QMainWindow):
         self.run_status = QLabel("就绪")
         self.run_status.setObjectName("runStatus")
         layout.addWidget(self.run_status)
+
+        self.cancel_button = QPushButton("取消命令")
+        self.cancel_button.setEnabled(False)
+        self.cancel_button.clicked.connect(self.cancel_command)
+        layout.addWidget(self.cancel_button)
 
         self.command_buttons.extend([self.browse_button, self.refresh_button, self.auto_button])
         return layout
@@ -505,6 +594,9 @@ class HardwareButlerWindow(QMainWindow):
         form.addWidget(QLabel("API"), 4, 0)
         form.addWidget(self.api_provider, 4, 1)
         layout.addLayout(form)
+
+        self.allow_network_search = QCheckBox("允许联网搜索/下载（可能产生 API 费用；不属于离线演示）")
+        layout.addWidget(self.allow_network_search)
 
         controls = QHBoxLayout()
         search = QPushButton("搜索并整理资料")
@@ -700,6 +792,9 @@ class HardwareButlerWindow(QMainWindow):
         form.addWidget(self.wf_auto_select, 6, 1)
         layout.addLayout(form)
 
+        self.wf_allow_execution = QCheckBox("允许运行工作流（可能调用配置的 LLM、编译器或仿真器；真实硬件仍禁用）")
+        layout.addWidget(self.wf_allow_execution)
+
         controls = QHBoxLayout()
         run_wf = QPushButton("运行工作流")
         run_wf.clicked.connect(self.run_workflow)
@@ -759,12 +854,13 @@ class HardwareButlerWindow(QMainWindow):
         self.wf_status_label.setWordWrap(True)
         layout.addWidget(self.wf_status_label)
 
-        self.wf_phase_table = QTableWidget(0, 4)
-        self.wf_phase_table.setHorizontalHeaderLabels(["阶段", "状态", "尝试", "错误"])
+        self.wf_phase_table = QTableWidget(0, 5)
+        self.wf_phase_table.setHorizontalHeaderLabels(["阶段", "状态", "尝试", "错误", "证据层级/模式"])
         self.wf_phase_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         self.wf_phase_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         self.wf_phase_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         self.wf_phase_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        self.wf_phase_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
         self.wf_phase_table.verticalHeader().setVisible(False)
         self.wf_phase_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         layout.addWidget(self.wf_phase_table, 2)
@@ -789,6 +885,10 @@ class HardwareButlerWindow(QMainWindow):
         return page
 
     def run_workflow(self) -> None:
+        if not self.wf_allow_execution.isChecked():
+            self.append_output("请先明确授权运行工作流；它可能调用 LLM/编译器，不是纯离线 mock 演示。")
+            self.tabs.setCurrentIndex(TAB_WORKFLOW)
+            return
         goal = self.wf_goal_input.text().strip()
         if not goal:
             self.append_output("请先输入一句话目标。")
@@ -813,6 +913,10 @@ class HardwareButlerWindow(QMainWindow):
         self.run_command(argv)
 
     def run_workflow_resume(self) -> None:
+        if not self.wf_allow_execution.isChecked():
+            self.append_output("恢复工作流也需要勾选运行授权；不会启用真实硬件。")
+            self.tabs.setCurrentIndex(TAB_WORKFLOW)
+            return
         self.run_command(self.cli("workflow-run", "--root", self.project_root(), "--resume", "--json"))
 
     def run_workflow_status(self) -> None:
@@ -843,26 +947,12 @@ class HardwareButlerWindow(QMainWindow):
         self.run_command(argv)
 
     def load_workflow_llm_config(self) -> None:
-        import json as _json
-        argv = self.cli("workflow-llm-config", "--root", self.project_root(), "--json")
-        try:
-            result = subprocess.run(
-                argv, capture_output=True, text=True, encoding="utf-8",
-                errors="replace", timeout=30,
-            )
-        except subprocess.TimeoutExpired:
-            self.append_output("读取 LLM 配置超时（30s）——CLI 无响应，请检查杀毒软件或磁盘。")
-            return
-        if result.returncode != 0:
-            self.append_output(f"读取 LLM 配置失败: {result.stderr.strip() or result.stdout.strip()}")
-            return
-        try:
-            data = _json.loads(result.stdout)
-        except ValueError:
-            self.append_output(f"LLM 配置返回非 JSON: {result.stdout[:300]}")
-            return
-        config = data.get("config", {}) if isinstance(data, dict) else {}
-        if not config:
+        self.run_command(self.cli("workflow-llm-config", "--root", self.project_root(), "--json"))
+
+    def apply_workflow_llm_config(self, data: dict[str, Any]) -> None:
+        config = data.get("config")
+        if not isinstance(config, dict):
+            self.append_output("LLM 配置响应缺少有效的 config 对象。")
             return
         provider = str(config.get("provider", "claude-code"))
         idx = self.wf_llm_provider.findText(provider)
@@ -878,12 +968,9 @@ class HardwareButlerWindow(QMainWindow):
         status = str(state.get("status", ""))
         current = str(state.get("current_stage", ""))
         goal = str(state.get("goal", ""))
-        self.wf_status_label.setText(
-            f"状态: {status or '-'}    当前阶段: {current or '(无)'}    目标: {goal or '-'}"
-        )
         stages = state.get("stages")
-        if not isinstance(stages, list):
-            return
+        stages = stages if isinstance(stages, list) else []
+        evidence_modes = []
         self.wf_phase_table.setRowCount(0)
         for stage in stages:
             if not isinstance(stage, dict):
@@ -895,6 +982,15 @@ class HardwareButlerWindow(QMainWindow):
             self.wf_phase_table.setItem(row, 2, QTableWidgetItem(str(stage.get("attempts", ""))))
             error = str(stage.get("error", "") or "")
             self.wf_phase_table.setItem(row, 3, QTableWidgetItem(error[:200]))
+            evidence = stage.get("evidence")
+            mode = str(evidence.get("verification_level") or evidence.get("mode") or "unknown") if isinstance(evidence, dict) else "unknown"
+            self.wf_phase_table.setItem(row, 4, QTableWidgetItem(mode))
+            if mode not in evidence_modes:
+                evidence_modes.append(mode)
+        self.wf_status_label.setText(
+            f"状态: {status or '-'}    当前阶段: {current or '(无)'}    目标: {goal or '-'}\n"
+            f"证据: {', '.join(evidence_modes) or 'unknown'}；mock/sim/仿真均为非实机证据，不能证明实机通过。"
+        )
 
     def apply_workflow_llm_tasks(self, pending: list[Any]) -> None:
         self.wf_llm_table.setRowCount(0)
@@ -1103,7 +1199,7 @@ class HardwareButlerWindow(QMainWindow):
             self.append_output("请先选择或输入构建日志文件路径。")
             self.tabs.setCurrentIndex(TAB_TOOLS)
             return
-        self.run_command(self.cli("classify-log", "--log", log_path, "--json"))
+        self.run_command(self.cli("classify-log", log_path, "--json"))
 
     def run_firmware_plan(self) -> None:
         argv = self.cli("firmware-plan", "--root", self.project_root(), "--json")
@@ -1218,12 +1314,43 @@ class HardwareButlerWindow(QMainWindow):
 
     def project_root(self) -> str:
         value = self.project_input.text().strip()
-        return value or str(APP_ROOT)
+        return str(Path(value).expanduser().resolve()) if value else str(APP_ROOT)
+
+    def reset_project_state(self) -> None:
+        self.current_state = {}
+        self.current_workbench = {}
+        self.current_brain = {}
+        self.current_answer = {}
+        self.current_task_steps = []
+        self.current_actions = []
+        self.current_artifacts = []
+        for table in self.findChildren(QTableWidget):
+            table.setRowCount(0)
+        for field in (self.next_command, self.home_next_command, self.answer_text, self.unknown_text):
+            field.clear()
+        for card in (self.status_card, self.backend_card, self.cubemx_card):
+            card.set_value("待刷新")
+        self.safety_card.set_value("真实硬件禁用")
+        self.next_title.setText("项目已切换，请刷新")
+        self.home_next_title.setText("项目已切换，请刷新")
+        self.next_reason.clear()
+        self.home_next_reason.clear()
+        self.brain_summary.setText("项目已切换，资料与风险尚未刷新。")
+        self.evidence_summary.setText("项目已切换，资料尚未扫描。")
+        self.task_summary.setText("还没有生成当前项目的任务计划。")
+        self.wf_status_label.setText("尚未读取当前项目工作流状态。")
+        self.home_status_value.setText("待刷新")
+        self.home_backend_value.setText("未检测")
+        self.home_report_value.setText("尚未读取")
+        self.home_safety_value.setText("真实硬件禁用")
+        self.allow_network_search.setChecked(False)
+        self.wf_allow_execution.setChecked(False)
 
     def command_env(self) -> dict[str, str]:
         env = dict(os.environ)
         env["PYTHONIOENCODING"] = "utf-8"
         env["HW_BUTLER_ROOT"] = self.project_root()
+        env["HARDWARE_BUTLER_ENABLE_REAL_FLASH"] = "0"
         return env
 
     def cli(self, *args: str) -> list[str]:
@@ -1263,6 +1390,10 @@ class HardwareButlerWindow(QMainWindow):
         self.tabs.setCurrentIndex(TAB_REPORTS)
 
     def run_document_search(self) -> None:
+        if not self.allow_network_search.isChecked():
+            self.append_output("请先在资料搜索页授权联网搜索/下载；离线模式不会调用 API。")
+            self.tabs.setCurrentIndex(TAB_SEARCH)
+            return
         part = self.part_input.text().strip()
         if not part:
             self.append_output("请先输入芯片或器件型号。")
@@ -1296,6 +1427,10 @@ class HardwareButlerWindow(QMainWindow):
         self.run_command(argv)
 
     def run_research(self) -> None:
+        if not self.allow_network_search.isChecked():
+            self.append_output("请先在资料搜索页授权联网研究；离线模式不会调用 API。")
+            self.tabs.setCurrentIndex(TAB_SEARCH)
+            return
         part = self.part_input.text().strip()
         if not part:
             self.append_output("请先输入芯片或器件型号。")
@@ -1425,56 +1560,105 @@ class HardwareButlerWindow(QMainWindow):
         if not isinstance(argv, list) or not all(isinstance(item, str) for item in argv):
             self.append_output("所选动作没有可运行命令。")
             return
-        if action.get("touches_hardware"):
-            self.append_output("真实硬件动作保持计划门控，不能直接从此界面运行。")
+        if action.get("safe_by_default") is not True or action.get("touches_hardware") is not False:
+            self.append_output("动作缺少明确的安全声明或涉及真实硬件，不能从此界面运行。")
             return
-        self.run_command(self.normalize_argv(argv))
+        normalized = self.normalize_argv(argv)
+        prefix = self.cli()
+        if normalized[:len(prefix)] != prefix or len(normalized) <= len(prefix) or normalized[len(prefix)] not in SAFE_ACTION_COMMANDS:
+            self.append_output("动作不是受支持的安全 Hardware Butler CLI 命令，已拒绝运行。")
+            return
+        if normalized[len(prefix)] == "chip-dossier" and any(flag in normalized for flag in ("--search", "--download", "--api-search")) and not self.allow_network_search.isChecked():
+            self.append_output("资料动作需要先在资料搜索页授权联网搜索/下载。")
+            return
+        self.run_command(normalized)
 
     def normalize_argv(self, argv: list[str]) -> list[str]:
         if not argv:
             return argv
-        if argv[0] == "python":
-            if len(argv) >= 2 and Path(argv[1]).as_posix().endswith("tools/hardware_butler.py"):
+        if argv[0] in {"python", sys.executable}:
+            if len(argv) >= 2 and Path(argv[1]).as_posix() in {"tools/hardware_butler.py", SOURCE_CLI.as_posix()}:
                 return self.cli(*argv[2:])
-            if FROZEN and len(argv) >= 2:
-                return self.cli(*argv[2:])
-            return [sys.executable, *argv[1:]]
         return argv
 
     def run_command(self, argv: list[str]) -> None:
-        if self.worker and self.worker.isRunning():
+        if self.worker is not None:
             self.append_output("已有命令正在运行。")
             self.tabs.setCurrentIndex(TAB_OUTPUT)
             return
+        if self._close_pending:
+            return
+        self._refresh_after_command = False
         self.append_output(f"> {' '.join(argv)}")
         self.set_running(True, "运行中...")
         self.worker = CommandWorker(argv, cwd=APP_ROOT, env=self.command_env())
-        self.worker.finished.connect(self.command_finished)
+        self.worker.result_ready.connect(self.command_finished)
+        self.worker.finished.connect(self.worker_finished)
         self.worker.start()
+
+    def cancel_command(self) -> None:
+        if self.worker is not None and self.worker.isRunning():
+            self.worker.cancel()
+            self.cancel_button.setEnabled(False)
+            self.run_status.setText("正在取消...")
+
+    def worker_finished(self) -> None:
+        worker = self.worker
+        self.worker = None
+        if worker is not None:
+            worker.deleteLater()
+        self.set_running(False, self.run_status.text())
+        if self._close_pending:
+            self.close()
+        elif self._refresh_after_command:
+            self._refresh_after_command = False
+            QTimer.singleShot(0, self.run_workbench)
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        if self.worker is not None:
+            self._close_pending = True
+            self.cancel_command()
+            event.ignore()
+            return
+        super().closeEvent(event)
 
     def command_finished(self, argv: list[str], code: int, stdout: str, stderr: str) -> None:
         data = parse_json(stdout)
+        status = data.get("status", "")
+        failed = code != 0 or not isinstance(status, str) or status in {"error", "failed"}
+        if "--json" in argv and not data:
+            self.append_output("CLI 未返回有效的非空 JSON 对象；请检查后端输出和依赖。")
+            failed = True
         if data:
-            self.apply_report(data)
-            self.append_output(render_summary(data, code))
+            try:
+                self.apply_report(data)
+                if "workflow-llm-config" in argv and not failed:
+                    self.apply_workflow_llm_config(data)
+            except (TypeError, ValueError, AttributeError):
+                LOGGER.exception("Invalid CLI report")
+                self.append_output("CLI 报告字段无效，无法完整展示；请检查后端 JSON 契约。")
+                failed = True
+            self.append_output(render_summary(data, code if not failed or code else 1))
         elif stdout:
             self.append_output(stdout.rstrip())
         if stderr:
             self.append_output(stderr.rstrip())
         if not data:
             self.append_output(f"退出码: {code}")
-        self.set_running(False, "完成" if code == 0 else f"失败: {code}")
+        message = "已取消" if code == 130 else "超时" if code == 124 else f"失败: {code or 'CLI 响应'}" if failed else "完成"
+        self.set_running(self.worker is not None, message)
         state = data.get("state") if isinstance(data, dict) else None
         if isinstance(state, dict) and isinstance(state.get("stages"), list):
             self.apply_workflow_state(state)
         pending = data.get("pending") if isinstance(data, dict) else None
         if isinstance(pending, list):
             self.apply_workflow_llm_tasks(pending)
-        if data.get("part") and data.get("documents_dir"):
-            QTimer.singleShot(0, self.run_workbench)
+        if not failed and data.get("part") and data.get("documents_dir"):
+            self._refresh_after_command = True
 
     def set_running(self, running: bool, message: str) -> None:
         self.project_input.setEnabled(not running)
+        self.cancel_button.setEnabled(running and not self._close_pending)
         for button in self.command_buttons:
             button.setEnabled(not running)
         self.run_status.setText(message)
@@ -1682,6 +1866,7 @@ class HardwareButlerWindow(QMainWindow):
                 self.brain_task_table.setItem(row, col, readonly_item(value))
 
     def set_phases(self, phases: list[dict[str, Any]]) -> None:
+        phases = [phase for phase in phases if isinstance(phase, dict)]
         self.phase_table.setRowCount(len(phases))
         for row, phase in enumerate(phases):
             values = [
@@ -1759,7 +1944,7 @@ def format_size(size_bytes: int) -> str:
 
 def safe_part_name(part: str) -> str:
     cleaned = re.sub(r"[^A-Za-z0-9_.-]+", "-", part.strip())
-    return cleaned.strip("-") or "unknown-part"
+    return cleaned.strip(".-") or "unknown-part"
 
 
 def search_preset_id(label: str) -> str:
@@ -2017,7 +2202,7 @@ def citation_paths(citations: list[Any]) -> str:
 
 
 def render_summary(data: dict[str, Any], code: int) -> str:
-    lines = [f"完成，退出码: {code}"]
+    lines = [f"{'完成' if code == 0 else '失败/中止'}，退出码: {code}"]
     if data.get("app") == "hardware-butler-workbench":
         project = data.get("project") if isinstance(data.get("project"), dict) else {}
         state = data.get("state") if isinstance(data.get("state"), dict) else {}
@@ -2191,7 +2376,8 @@ TUTORIAL_HTML = """
 </ul>
 
 <h3>安全边界</h3>
-<p>工作台默认只运行安全本地动作。它不会直接烧录、擦除、复位、在线调试、长时间观测、发送总线帧或扫描网络。</p>
+<p>工作台子进程始终禁用真实硬件，即使父进程设置了真实烧录环境开关，也不会继承启用。联网搜索/下载和可能调用 LLM、编译器或仿真器的工作流必须单独勾选授权。</p>
+<p>mock、sim、behavior-mock 和仿真结果不是实机证据；阶段显示 completed 也不代表实机验证通过。取消或关闭窗口会中止当前 CLI 进程树，但不会回滚已写文件，恢复工作流前应检查状态和产物。</p>
 <p>真实硬件动作保持 <b>planned-gated</b>：需要动作计划、确认 token、设备身份、电压电流证据、产物 hash 和回滚记录。</p>
 
 <h3>exe 目录</h3>

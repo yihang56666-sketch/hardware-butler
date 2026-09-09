@@ -82,7 +82,7 @@ Teach the orchestrator skill and agent role to route chip-specific bring-up requ
 Run:
 
 ```powershell
-python C:\Users\35182\.codex\skills\.system\skill-creator\scripts\quick_validate.py .agents\skills\chip-bringup
+python <user-home>/.codex/skills/.system/skill-creator/scripts/quick_validate.py .agents/skills/chip-bringup
 ```
 
 Expected: validation passes.

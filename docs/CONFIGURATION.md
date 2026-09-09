@@ -57,7 +57,7 @@ cp .hardware-butler.json.template ~/.hardware-butler/config.json
 
 ```bash
 # Windows PowerShell
-$env:HW_BUTLER_ROOT = "D:\projects\hardware-agent"
+$env:HW_BUTLER_ROOT = "<repo-root>"
 $env:HW_BUTLER_LOG_LEVEL = "DEBUG"
 
 # Linux/macOS

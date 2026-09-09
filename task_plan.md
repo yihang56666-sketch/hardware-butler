@@ -17,13 +17,13 @@ test work blocks that.
 - **Mock-mode e2e workflow runs clean** (live smoke test on cubemx-basic fixture: all 9 stages completed, status `completed`).
 - **Autonomous LLM loop is real** — `tests/unit/test_workflow_autonomous_loop.py` proves: with a stubbed HTTP LLM provider, a one-sentence goal with NO `--feature/--pin/--part` auto-fills via LLM intent parse, writes LLM-generated firmware, completes all 9 stages. No `blocked-needs-input`.
 - **LLM HTTP retry hardening** — `tools/llm_client.py` `_call_with_retry`: MAX_ATTEMPTS=3 with exponential backoff, structured `error_kind` ("transient"|"fatal") and `attempts` count. Retries 429/5xx/URLError/Timeout/ConnectionError; never retries 401/400/RuntimeError/ValueError.
-- **GUI has 12 tabs** including the Phase 6 "工具" tab consolidating 6 high-value CLI subcommands + LLM provider config panel.
+- **GUI has 13 tabs** including the Phase 6 "工具" tab consolidating 6 high-value CLI subcommands + LLM provider config panel.
 - **14 vendor family adapters** covering all mainstream 32-bit MCU ISAs (Cortex-M0+/M3/M4F/M7/M23/M33, RISC-V, C28x, MIPS, Xtensa LX6/LX7, AVR 8-bit, Renesas CISC): stm32 / esp32 / msp430 / avr / nordic / riscv / ti-tiva / c2000 / ra / lpc / pic32 / max32 / imxrt / rx. Plus GD32/CH32 auto-mapped to stm32-compatible.
 - **5-layer behavior verification** in `_verify_signal`: (1) expected_regex + value-range bounds (expected_min/expected_max on first captured group), (2) expected_text exact substring, (3) frequency_hz measurement from timestamps, (4) kind-keyword fallback for 9 kinds (led/uart/rtt/swo/i2c/spi/adc/pwm/can), (5) QEMU behavior emulation.
 - **Backends**: Keil/GCC/EIDE build, J-Link/OpenOCD/probe-rs/pyOCD flash, serial/CAN/net/QEMU observe.
 - **Real-mode gating intact**: `HARDWARE_BUTLER_ENABLE_REAL_FLASH=1` + goal_token + value-sanity checks.
 - **Plugin-sync pre-commit hook**: `tools/install_plugin_sync_hook.py` auto-syncs `plugins/.../scripts/` on commit when source changes.
-- **Test baseline**: **805 passed / 10 skipped**, ruff + mypy clean on tools/ (72 source files).
+- **Test baseline**: **1017 passed / 12 skipped**, ruff + mypy clean on tools/ (refreshed 2026-09-09; 805/10 at the Phase 14 snapshot).
 - **Docs**: HANDOFF §1-22, CHANGELOG Unreleased section, `docs/REAL_BOARD_DAY_RUNBOOK.md` board-day-only checklist.
 
 ## Phase Map (final)

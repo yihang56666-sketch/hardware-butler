@@ -27,7 +27,7 @@ Claude Code skill，驱动 EIDE (Embedded IDE) 进行工程扫描、构建配置
 
 ```json
 {
-  "builder_dir": "C:\\Users\\<user>\\.vscode\\extensions\\cl.eide-3.27.0\\res\\tools\\win32\\unify_builder",
+  "builder_dir": "<user-home>/.vscode/extensions/cl.eide-<version>/res/tools/win32/unify_builder",
   "builder_exe": "unify_builder.exe",
   "code_exe": "code",
   "toolchain_prefix": "arm-none-eabi-",

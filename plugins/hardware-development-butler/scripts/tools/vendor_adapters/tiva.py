@@ -20,7 +20,7 @@ from typing import Any
 
 from vendor_adapters import VendorAdapter, register_adapter
 
-from . import serial_monitor_command
+from . import openocd_flash_command, serial_monitor_command
 
 
 class TivaAdapter(VendorAdapter):
@@ -78,7 +78,7 @@ class TivaAdapter(VendorAdapter):
             return ["lm4flash", elf]
         if tool == "openocd":
             cfg = ctx.get("openocd_cfg", "ti-cs-dap.cfg")
-            return ["openocd", "-f", cfg, "-c", f"program {elf} verify reset exit"]
+            return openocd_flash_command(cfg, elf)
         return []
 
     def observe_command(self, ctx: dict[str, Any]) -> list[str]:

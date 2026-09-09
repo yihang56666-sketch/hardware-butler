@@ -5,15 +5,8 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import messagebox, scrolledtext, ttk
 
-BASE_DIR = Path(r"D:\hermes")
-HERMES_HOME = BASE_DIR / "data"
-HERMES_EXE = BASE_DIR / "venv" / "Scripts" / "hermes.exe"
-ENV_FILE = HERMES_HOME / ".env"
-
-DAILY_DIR = Path(r"C:\Users\35182\ai-research-daily")
-DAILY_APP = DAILY_DIR / "app.py"
-DAILY_COLLECT = DAILY_DIR / "collect.py"
-DAILY_CACHE = DAILY_DIR / "data_cache.json"
+DEFAULT_HERMES_ROOT = Path.home() / "hermes"
+DEFAULT_DAILY_DIR = Path.home() / "ai-research-daily"
 
 
 DEFAULT_PROMPT = """任务：生成一份中文简报，主题是“今天最新、最近爆火或增长很快的 GitHub 开源项目”。
@@ -45,14 +38,26 @@ DEFAULT_PROMPT = """任务：生成一份中文简报，主题是“今天最新
 - 每条都要有来源链接。
 - 不确定的信息必须明确标注“不确定”。
 - 结合本地日报目录里的数据进行整理：
-  C:\\Users\\35182\\ai-research-daily
+  {daily_dir}
 """
 
 
-def load_env():
+def resolve_hermes_root() -> Path:
+    return Path(os.getenv("HW_BUTLER_HERMES_ROOT", str(DEFAULT_HERMES_ROOT))).expanduser()
+
+
+def resolve_daily_dir() -> Path:
+    return Path(os.getenv("HW_BUTLER_AI_DAILY_DIR", str(DEFAULT_DAILY_DIR))).expanduser()
+
+
+def build_default_prompt(daily_dir: Path) -> str:
+    return DEFAULT_PROMPT.format(daily_dir=daily_dir)
+
+
+def load_env(env_file: Path):
     values = {}
-    if ENV_FILE.exists():
-        for line in ENV_FILE.read_text(encoding="utf-8", errors="ignore").splitlines():
+    if env_file.exists():
+        for line in env_file.read_text(encoding="utf-8", errors="ignore").splitlines():
             if not line or line.lstrip().startswith("#") or "=" not in line:
                 continue
             key, value = line.split("=", 1)
@@ -60,12 +65,12 @@ def load_env():
     return values
 
 
-def save_env(updates):
-    HERMES_HOME.mkdir(parents=True, exist_ok=True)
+def save_env(env_file: Path, updates):
+    env_file.parent.mkdir(parents=True, exist_ok=True)
     lines = []
     seen = set()
-    if ENV_FILE.exists():
-        for line in ENV_FILE.read_text(encoding="utf-8", errors="ignore").splitlines():
+    if env_file.exists():
+        for line in env_file.read_text(encoding="utf-8", errors="ignore").splitlines():
             if "=" in line and not line.lstrip().startswith("#"):
                 key = line.split("=", 1)[0].strip()
                 if key in updates:
@@ -76,12 +81,12 @@ def save_env(updates):
     for key, value in updates.items():
         if key not in seen:
             lines.append(f"{key}={value}")
-    ENV_FILE.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+    env_file.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
 
 
-def hermes_env():
+def hermes_env(hermes_home: Path):
     env = os.environ.copy()
-    env["HERMES_HOME"] = str(HERMES_HOME)
+    env["HERMES_HOME"] = str(hermes_home)
     return env
 
 
@@ -94,16 +99,24 @@ def new_console(args, cwd=None, env=None):
     )
 
 
-def run_hermes(args):
-    if not HERMES_EXE.exists():
-        messagebox.showerror("Hermes missing", f"Not found:\n{HERMES_EXE}")
+def run_hermes(hermes_exe: Path, hermes_home: Path, args):
+    if not hermes_exe.exists():
+        messagebox.showerror("Hermes missing", f"Not found:\n{hermes_exe}")
         return
-    new_console(args, env=hermes_env())
+    new_console(args, env=hermes_env(hermes_home))
 
 
 class Launcher(tk.Tk):
     def __init__(self):
         super().__init__()
+        self.hermes_root = resolve_hermes_root()
+        self.hermes_home = self.hermes_root / "data"
+        self.hermes_exe = self.hermes_root / "venv" / "Scripts" / "hermes.exe"
+        self.env_file = self.hermes_home / ".env"
+        self.daily_dir = resolve_daily_dir()
+        self.daily_app = self.daily_dir / "app.py"
+        self.daily_collect = self.daily_dir / "collect.py"
+        self.daily_cache = self.daily_dir / "data_cache.json"
         self.title("龙虾 + AI 前沿日报")
         self.geometry("940x720")
         self.minsize(820, 600)
@@ -117,7 +130,7 @@ class Launcher(tk.Tk):
         ttk.Label(root, text="龙虾 + AI 前沿日报", font=("Microsoft YaHei UI", 17, "bold")).pack(anchor="w")
         ttk.Label(
             root,
-            text=f"龙虾本体: {HERMES_EXE}    日报目录: {DAILY_DIR}",
+            text=f"龙虾本体: {self.hermes_exe}    日报目录: {self.daily_dir}",
             foreground="#4b5563",
         ).pack(anchor="w", pady=(2, 12))
 
@@ -155,7 +168,7 @@ class Launcher(tk.Tk):
         prompt_box.pack(fill="both", expand=True, pady=(12, 0))
         self.prompt = scrolledtext.ScrolledText(prompt_box, wrap="word", height=18, font=("Consolas", 10))
         self.prompt.pack(fill="both", expand=True)
-        self.prompt.insert("1.0", DEFAULT_PROMPT)
+        self.prompt.insert("1.0", build_default_prompt(self.daily_dir))
 
         prompt_buttons = ttk.Frame(root)
         prompt_buttons.pack(fill="x", pady=(10, 0))
@@ -170,13 +183,14 @@ class Launcher(tk.Tk):
         ).pack(anchor="w", pady=(10, 0))
 
     def _load_values(self):
-        values = load_env()
+        values = load_env(self.env_file)
         self.api_key.insert(0, values.get("OPENAI_API_KEY", ""))
         self.base_url.insert(0, values.get("OPENAI_BASE_URL", "https://token-plan-cn.xiaomimimo.com/v1"))
         self.model.insert(0, values.get("OPENAI_MODEL", "mimo-v2.5-pro"))
 
     def save_config(self):
         save_env(
+            self.env_file,
             {
                 "OPENAI_API_KEY": self.api_key.get().strip(),
                 "OPENAI_BASE_URL": self.base_url.get().strip(),
@@ -185,41 +199,41 @@ class Launcher(tk.Tk):
                 "TERMINAL_ENV": "local",
             }
         )
-        messagebox.showinfo("已保存", f"配置已写入：\n{ENV_FILE}")
+        messagebox.showinfo("已保存", f"配置已写入：\n{self.env_file}")
 
     def start_hermes(self):
         self.save_config()
-        run_hermes([str(HERMES_EXE)])
+        run_hermes(self.hermes_exe, self.hermes_home, [str(self.hermes_exe)])
 
     def run_doctor(self):
-        run_hermes([str(HERMES_EXE), "doctor"])
+        run_hermes(self.hermes_exe, self.hermes_home, [str(self.hermes_exe), "doctor"])
 
     def open_env(self):
-        HERMES_HOME.mkdir(parents=True, exist_ok=True)
-        ENV_FILE.touch(exist_ok=True)
-        subprocess.Popen(["notepad.exe", str(ENV_FILE)])
+        self.hermes_home.mkdir(parents=True, exist_ok=True)
+        self.env_file.touch(exist_ok=True)
+        subprocess.Popen(["notepad.exe", str(self.env_file)])
 
     def start_daily_app(self):
-        if not DAILY_APP.exists():
-            messagebox.showerror("找不到日报界面", f"未找到：\n{DAILY_APP}")
+        if not self.daily_app.exists():
+            messagebox.showerror("找不到日报界面", f"未找到：\n{self.daily_app}")
             return
-        new_console(["python", str(DAILY_APP)], cwd=DAILY_DIR)
+        new_console(["python", str(self.daily_app)], cwd=self.daily_dir)
 
     def refresh_daily_data(self):
-        if not DAILY_COLLECT.exists():
-            messagebox.showerror("找不到采集脚本", f"未找到：\n{DAILY_COLLECT}")
+        if not self.daily_collect.exists():
+            messagebox.showerror("找不到采集脚本", f"未找到：\n{self.daily_collect}")
             return
-        new_console(["python", str(DAILY_COLLECT)], cwd=DAILY_DIR)
+        new_console(["python", str(self.daily_collect)], cwd=self.daily_dir)
 
     def open_daily_folder(self):
-        DAILY_DIR.mkdir(parents=True, exist_ok=True)
-        subprocess.Popen(["explorer.exe", str(DAILY_DIR)])
+        self.daily_dir.mkdir(parents=True, exist_ok=True)
+        subprocess.Popen(["explorer.exe", str(self.daily_dir)])
 
     def open_daily_cache(self):
-        if DAILY_CACHE.exists():
-            subprocess.Popen(["notepad.exe", str(DAILY_CACHE)])
+        if self.daily_cache.exists():
+            subprocess.Popen(["notepad.exe", str(self.daily_cache)])
         else:
-            messagebox.showwarning("缓存不存在", f"请先点击“刷新数据”：\n{DAILY_CACHE}")
+            messagebox.showwarning("缓存不存在", f"请先点击“刷新数据”：\n{self.daily_cache}")
 
     def copy_prompt(self):
         text = self.prompt.get("1.0", "end").strip()
@@ -229,7 +243,7 @@ class Launcher(tk.Tk):
 
     def reset_prompt(self):
         self.prompt.delete("1.0", "end")
-        self.prompt.insert("1.0", DEFAULT_PROMPT)
+        self.prompt.insert("1.0", build_default_prompt(self.daily_dir))
 
 
 if __name__ == "__main__":

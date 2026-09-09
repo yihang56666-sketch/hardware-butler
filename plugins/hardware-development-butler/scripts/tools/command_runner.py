@@ -328,6 +328,7 @@ def run_command(item: dict[str, Any], *, timeout_s: int) -> dict[str, Any]:
         returncode = process.wait(timeout=timeout_s)
         stdout_capture.join()
         stderr_capture.join()
+        _close_process_pipes(process)
         duration_ms = int((time.time() - started) * 1000)
         return {
             "label": item["label"],
@@ -348,6 +349,7 @@ def run_command(item: dict[str, Any], *, timeout_s: int) -> dict[str, Any]:
                 process.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 pass
+            _close_process_pipes(process)
         duration_ms = int((time.time() - started) * 1000)
         return {
             "label": item["label"],
@@ -361,6 +363,12 @@ def run_command(item: dict[str, Any], *, timeout_s: int) -> dict[str, Any]:
             "stdout_truncated": False,
             "stderr_truncated": False,
         }
+
+
+def _close_process_pipes(process: subprocess.Popen[bytes]) -> None:
+    for stream in (process.stdout, process.stderr):
+        if stream is not None and not stream.closed:
+            stream.close()
 
 
 class LimitedPipeCapture:

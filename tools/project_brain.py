@@ -78,7 +78,7 @@ def summarize_iocs(root: Path, scan_data: dict[str, Any]) -> list[dict[str, Any]
         if not isinstance(item, dict):
             continue
         rel_path = str(item.get("path") or "")
-        if not rel_path:
+        if not rel_path or not project_scanner.is_project_file(root, root / rel_path):
             continue
         try:
             summaries.append(cubemx_ioc_summary.summarize(root / rel_path))

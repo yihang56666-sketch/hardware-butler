@@ -51,7 +51,7 @@ def test_preflight_ready_when_probe_and_target_resolve(tmp_path: Path) -> None:
             return _fake_proc(pyocd_list_probes)
         return _fake_proc()
 
-    with patch("shutil.which", side_effect=lambda n: f"C:/fake/{n}" if n == "pyocd" else None):
+    with patch("shutil.which", side_effect=lambda n: f"/opt/fake/{n}" if n == "pyocd" else None):
         with patch("subprocess.run", side_effect=fake_run):
             result = rp.run_preflight(tmp_path, "STM32F407VGT6")
     assert result["ready"] is True
@@ -68,7 +68,7 @@ def test_preflight_pack_missing_vs_name_mismatch(tmp_path: Path) -> None:
     def fake_run(cmd: list[str], **kwargs: object) -> object:  # noqa: ANN003
         return _fake_proc("h\n--\n")  # every query: zero rows
 
-    with patch("shutil.which", side_effect=lambda n: f"C:/fake/{n}" if n == "pyocd" else None):
+    with patch("shutil.which", side_effect=lambda n: f"/opt/fake/{n}" if n == "pyocd" else None):
         with patch("subprocess.run", side_effect=fake_run):
             result = rp.run_preflight(tmp_path, "STM32F407VGT6")
     assert result["target_status"] == "pack-missing"
@@ -85,7 +85,7 @@ def test_preflight_reports_unresolvable_canonical_name(tmp_path: Path) -> None:
             return _fake_proc(rows)
         return _fake_proc("h\n--\n")
 
-    with patch("shutil.which", side_effect=lambda n: f"C:/fake/{n}" if n == "pyocd" else None):
+    with patch("shutil.which", side_effect=lambda n: f"/opt/fake/{n}" if n == "pyocd" else None):
         with patch("subprocess.run", side_effect=fake_run):
             result = rp.run_preflight(tmp_path, "STM32F999VGT6")
     assert result["target_status"] == "not-found"
@@ -101,7 +101,7 @@ def test_preflight_ignores_pyocd_no_probes_notice(tmp_path: Path) -> None:
             return _fake_proc(rows)
         return _fake_proc("h\n--\nNo available debug probes are connected\n")
 
-    with patch("shutil.which", side_effect=lambda n: f"C:/fake/{n}" if n == "pyocd" else None):
+    with patch("shutil.which", side_effect=lambda n: f"/opt/fake/{n}" if n == "pyocd" else None):
         with patch("subprocess.run", side_effect=fake_run):
             result = rp.run_preflight(tmp_path, "STM32F407VGT6")
     assert result["probes_attached"] == []
@@ -110,7 +110,7 @@ def test_preflight_ignores_pyocd_no_probes_notice(tmp_path: Path) -> None:
 
 
 def test_preflight_rejects_java_jlink_false_positive(tmp_path: Path) -> None:
-    with patch("shutil.which", side_effect=lambda n: (r"C:\Program Files\Eclipse Adoptium\jdk-21\bin\JLink.exe" if n == "JLink.exe" else None)):
+    with patch("shutil.which", side_effect=lambda n: ("/opt/eclipse-adoptium/jdk-21/bin/JLink.exe" if n == "JLink.exe" else None)):
         with patch("pathlib.Path.exists", return_value=False):
             result = rp.run_preflight(tmp_path, "STM32F407VGT6")
     assert result["tools"]["flash"]["JLink.exe"] == ""

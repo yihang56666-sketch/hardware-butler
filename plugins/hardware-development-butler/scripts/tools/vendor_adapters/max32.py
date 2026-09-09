@@ -23,7 +23,7 @@ from typing import Any
 
 from vendor_adapters import VendorAdapter, _segger_jlink, register_adapter
 
-from . import jlink_flash_command, serial_monitor_command
+from . import jlink_flash_command, openocd_flash_command, serial_monitor_command
 
 
 class MAX32Adapter(VendorAdapter):
@@ -74,7 +74,7 @@ class MAX32Adapter(VendorAdapter):
         probe = ctx.get("probe", "")
         if tool == "openocd":
             cfg = ctx.get("openocd_cfg", "max32665.cfg")
-            return ["openocd", "-f", cfg, "-c", f"program {elf} verify reset exit"]
+            return openocd_flash_command(cfg, elf)
         if tool == "pyocd":
             args = ["pyocd", "flash", "-t", target or "max32665"]
             if probe:

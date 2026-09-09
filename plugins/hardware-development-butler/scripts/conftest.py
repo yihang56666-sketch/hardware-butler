@@ -1,6 +1,10 @@
 """Pytest configuration and fixtures."""
 
+import os
+import shutil
 import sys
+import tempfile
+import time
 from pathlib import Path
 
 import pytest
@@ -17,6 +21,47 @@ import runtime_context  # noqa: E402
 EMBEDDED_DIR = runtime_context.embeddedskills_root()
 if str(EMBEDDED_DIR) not in sys.path:
     sys.path.insert(0, str(EMBEDDED_DIR))
+
+PYTEST_TEMP_PARENT = REPO_ROOT / "tests" / ".tmp-pytest-isolated"
+
+
+def _remove_with_retry(path: Path) -> None:
+    """Remove temporary directories while tolerating Windows handle races."""
+    for attempt in range(3):
+        try:
+            if path.is_symlink() or path.is_file():
+                path.unlink()
+            elif path.exists():
+                shutil.rmtree(path)
+            return
+        except FileNotFoundError:
+            return
+        except PermissionError:
+            if attempt == 2:
+                raise
+            time.sleep(0.1 * (attempt + 1))
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Give each pytest process a private, workspace-local basetemp.
+
+    A fixed ``--basetemp`` made simultaneous pytest runs delete each other's
+    temporary files on Windows. Per-process directories keep parallel runs
+    isolated while retaining the accessibility requirement tested by the suite.
+    """
+    if config.getoption("--basetemp", default=None):
+        return
+    PYTEST_TEMP_PARENT.mkdir(parents=True, exist_ok=True)
+    prefix = f"pytest-{os.getpid()}-"
+    basetemp = Path(tempfile.mkdtemp(prefix=prefix, dir=PYTEST_TEMP_PARENT))
+    config.option.basetemp = basetemp
+
+
+def pytest_unconfigure(config: pytest.Config) -> None:
+    """Remove only this process's private basetemp directory."""
+    current = getattr(config.option, "basetemp", None)
+    if current:
+        _remove_with_retry(Path(str(current)))
 
 
 @pytest.fixture

@@ -60,13 +60,13 @@
 
 ## Final baseline
 
-- **805 passed / 10 skipped** (was 477 at takeover; +328 tests).
+- **1017 passed / 12 skipped** (was 477 at takeover; cumulative +540 tests through 2026-09-09).
 - ruff + mypy clean on tools/ (**72 source files**, was 60).
 - Plugin re-synced; `test_plugin_sync` passes (**138 subtests**, was 132).
 - 14 vendor families covering all mainstream 32-bit MCU ISAs.
 - 5-layer behavior verification (kind-keyword / frequency / expected_text / regex / value-range).
 - LLM HTTP retry hardening (MAX_ATTEMPTS=3, transient/fatal classification).
-- GUI 12 tabs including Phase 6 tools-tab consolidation.
+- GUI 13 tabs including Phase 6 tools-tab consolidation.
 - Plugin-sync pre-commit hook + real-board-day runbook.
 
 ## Done — project complete

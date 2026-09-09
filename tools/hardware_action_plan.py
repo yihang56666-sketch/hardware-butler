@@ -63,6 +63,7 @@ DEBUG_REQUIRED = [*COMMON_REQUIRED]
 BUS_REQUIRED = ["target", "probe", "voltage", "current_limit", "external_loads", "recovery"]
 TOKEN_FIELDS = [
     "action",
+    "root",
     "plan_id",
     "created_at",
     "target",

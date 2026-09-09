@@ -81,9 +81,9 @@ hardware-butler = "tools.hardware_butler:main"
 butler = "tools.butler_cli:main"
 
 [project.urls]
-Homepage = "https://github.com/yihang56666-sketch/NextBoard"
-Repository = "https://github.com/yihang56666-sketch/NextBoard"
-Issues = "https://github.com/yihang56666-sketch/NextBoard/issues"
+Homepage = "https://github.com/yihang56666-sketch/hardware-butler"
+Repository = "https://github.com/yihang56666-sketch/hardware-butler"
+Issues = "https://github.com/yihang56666-sketch/hardware-butler/issues"
 
 [tool.setuptools.packages.find]
 include = ["tools*", "nextboard*"]
@@ -93,7 +93,7 @@ testpaths = ["tests"]
 python_files = ["test_*.py", "*_test.py", "validate_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-addopts = "-v -p no:cacheprovider --basetemp=tests/.tmp-pytest-runtime --cov=tools --cov=embeddedskills --cov-report=term-missing"
+addopts = "-v -p no:cacheprovider --cov=tools --cov=embeddedskills --cov-report=term-missing"
 markers = [
     "hardware: tests that require connected probes, boards, or physical interfaces",
     "enable_platformio: tests that re-enable PlatformIO detection (most tests disable it)",

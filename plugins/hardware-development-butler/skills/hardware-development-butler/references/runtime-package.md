@@ -24,8 +24,8 @@ Validation commands from the repository root:
 ```powershell
 python plugins\hardware-development-butler\scripts\tools\hardware_butler.py capabilities --json
 python plugins\hardware-development-butler\scripts\tests\validate_hardware_butler.py
-python C:\Users\35182\.codex\skills\.system\skill-creator\scripts\quick_validate.py plugins\hardware-development-butler\skills\hardware-development-butler
-python C:\Users\35182\.codex\skills\.system\plugin-creator\scripts\validate_plugin.py plugins\hardware-development-butler
+python <user-home>/.codex/skills/.system/skill-creator/scripts/quick_validate.py plugins/hardware-development-butler/skills/hardware-development-butler
+python <user-home>/.codex/skills/.system/plugin-creator/scripts/validate_plugin.py plugins/hardware-development-butler
 ```
 
 If the official plugin validator reports missing `yaml`, install PyYAML in the active Python environment or use the local package validator as a structural fallback.

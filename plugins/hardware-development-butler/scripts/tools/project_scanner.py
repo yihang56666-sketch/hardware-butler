@@ -32,6 +32,10 @@ EXCLUDE_DIRS = {
     "Release",
 }
 
+EXACT_NAME_MARKERS = {
+    "cmakelists.txt", "cmakepresets.json", "eide.yml", "makefile",
+}
+
 ARTIFACT_RULES: list[tuple[str, tuple[str, ...]]] = [
     ("cubemx_ioc", (".ioc",)),
     ("keil_project", (".uvprojx", ".uvmpw")),
@@ -54,6 +58,13 @@ def should_skip(path: Path) -> bool:
     return any(part in EXCLUDE_DIRS for part in path.parts)
 
 
+def is_project_file(root: Path, path: Path) -> bool:
+    try:
+        return path.resolve().is_relative_to(root.resolve()) and path.is_file()
+    except (OSError, RuntimeError):
+        return False
+
+
 def classify_file(path: Path) -> set[str]:
     name = path.name
     lower_name = name.lower()
@@ -63,8 +74,12 @@ def classify_file(path: Path) -> set[str]:
     for label, markers in ARTIFACT_RULES:
         for marker in markers:
             marker_lower = marker.lower()
-            if marker.startswith(".") and suffix == marker_lower:
-                labels.add(label)
+            if marker.startswith("."):
+                if suffix == marker_lower:
+                    labels.add(label)
+            elif marker_lower in EXACT_NAME_MARKERS:
+                if lower_name == marker_lower:
+                    labels.add(label)
             elif marker_lower in lower_name:
                 labels.add(label)
     if path.parent.name == ".eide" and name == "eide.yml":
@@ -90,6 +105,8 @@ def classify_pdf_by_name(name: str, lower_name: str, labels: set[str]) -> None:
 
 def scan(root: Path) -> dict[str, Any]:
     root = root.resolve()
+    if not root.is_dir():
+        raise ValueError(f"Project root must be an existing directory: {root}")
     artifacts: dict[str, list[dict[str, Any]]] = defaultdict(list)
     extensions: dict[str, int] = defaultdict(int)
     total_files = 0
@@ -97,7 +114,7 @@ def scan(root: Path) -> dict[str, Any]:
     for path in root.rglob("*"):
         if should_skip(path.relative_to(root)):
             continue
-        if not path.is_file():
+        if not is_project_file(root, path):
             continue
         total_files += 1
         if path.suffix:

@@ -67,7 +67,8 @@ STEPS: tuple[Step, ...] = (
     ),
     Step(
         name="quick-tests",
-        command=(
+        command=py(
+            "-m",
             "pytest",
             "tests/unit/test_plugin_sync.py",
             "tests/unit/test_hardware_butler_guide.py",
@@ -83,19 +84,19 @@ STEPS: tuple[Step, ...] = (
     ),
     Step(
         name="lint",
-        command=("ruff", "check", "tools/", "tests/"),
+        command=py("-m", "ruff", "check", "tools/", "tests/"),
         profiles=frozenset({"full"}),
         purpose="lint source and tests",
     ),
     Step(
         name="typecheck",
-        command=("mypy", "tools/", "--config-file", "mypy.ini"),
+        command=py("-m", "mypy", "tools/", "--config-file", "mypy.ini"),
         profiles=frozenset({"full"}),
         purpose="typecheck tools",
     ),
     Step(
         name="tests",
-        command=("pytest", "tests/", "-v", "--basetemp=.tmp-pytest-current"),
+        command=py("-m", "pytest", "tests/", "-v", "--basetemp=.tmp-pytest-current"),
         profiles=frozenset({"full"}),
         purpose="run the full local test matrix, excluding opt-in hardware tests",
     ),
@@ -168,21 +169,25 @@ def run_steps(steps: list[Step], *, dry_run: bool = False, verbose: bool = False
         print(f"  {format_command(step.command)}")
         if dry_run:
             continue
-        if verbose:
-            verbose_result = subprocess.run(step.command, cwd=REPO_ROOT, check=False, env=env)
-            returncode = verbose_result.returncode
-        else:
-            captured_result = subprocess.run(
-                step.command,
-                cwd=REPO_ROOT,
-                check=False,
-                env=env,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-            )
-            returncode = captured_result.returncode
+        try:
+            if verbose:
+                verbose_result = subprocess.run(step.command, cwd=REPO_ROOT, check=False, env=env)
+                returncode = verbose_result.returncode
+            else:
+                captured_result = subprocess.run(
+                    step.command,
+                    cwd=REPO_ROOT,
+                    check=False,
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                )
+                returncode = captured_result.returncode
+        except OSError as error:
+            print(f"FAILED {step.name}: {error}", file=sys.stderr)
+            return 127
         if returncode != 0:
             if not verbose:
                 _print_captured_output(captured_result)

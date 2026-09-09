@@ -259,7 +259,7 @@ For testing without an API key, set provider to `claude-code`:
 The host Claude Code agent will execute LLM tasks. For production, switch to:
 
 ```json
-{"provider": "anthropic", "api_key": "sk-ant-...", "model": "claude-sonnet-4-5"}
+{"provider": "anthropic", "api_key_env": "ANTHROPIC_API_KEY", "model": "claude-sonnet-4-5"}
 ```
 
 ---

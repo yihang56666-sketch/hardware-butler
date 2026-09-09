@@ -25,7 +25,7 @@ from typing import Any
 
 from vendor_adapters import VendorAdapter, _segger_jlink, register_adapter
 
-from . import jlink_flash_command, serial_monitor_command
+from . import jlink_flash_command, openocd_flash_command, serial_monitor_command
 
 
 class RXAdapter(VendorAdapter):
@@ -90,7 +90,7 @@ class RXAdapter(VendorAdapter):
             return jlink_flash_command(tool, target=target, elf=elf)
         if tool == "openocd":
             cfg = ctx.get("openocd_cfg", "e2lite.cfg")
-            return ["openocd", "-f", cfg, "-c", f"program {elf} verify reset exit"]
+            return openocd_flash_command(cfg, elf)
         return []
 
     def observe_command(self, ctx: dict[str, Any]) -> list[str]:

@@ -21,7 +21,7 @@ skill 目录下的 `config.json` 包含环境级配置，首次使用前确认 `
 
 ```json
 {
-  "uv4_exe": "C:\\Keil_v5\\UV4\\UV4.exe",
+  "uv4_exe": "<Keil-install-root>/UV4/UV4.exe",
   "operation_mode": 1
 }
 ```

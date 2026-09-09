@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -47,19 +50,35 @@ def _get_log_lock(log_path: str) -> threading.Lock:
     with _log_locks_lock:
         if log_path not in _log_locks:
             _log_locks[log_path] = threading.Lock()
-        return _log_locks[log_path]
+    return _log_locks[log_path]
+
+
+@contextmanager
+def _locked_log(path: Path) -> Iterator[None]:
+    with _get_log_lock(str(path)):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.with_suffix(".lock").open("a+b") as handle:
+            if sys.platform == "win32":
+                import msvcrt
+
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                if sys.platform == "win32":
+                    handle.seek(0)
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 def append_event(root: Path, event: dict[str, Any]) -> str:
-    """Append a single JSONL line using true append mode (no read-modify-rewrite).
-
-    The previous read-modify-rewrite pattern lost entries when two processes
-    appended concurrently: both read, both append, both write — the second
-    write overwrote the first. Using open("a") is atomic at the OS level
-    for writes under PIPE_BUF on POSIX, and on Windows the file is opened
-    in append mode which seeks to end on each write. Cross-process safety
-    is preserved by OS append semantics, not just the in-process Lock.
-    """
+    """Append a JSONL event under a shared thread and process lock."""
     path = safety_log_path(root)
     payload = {
         "schema_version": 1,
@@ -67,8 +86,7 @@ def append_event(root: Path, event: dict[str, Any]) -> str:
         **event,
     }
     line = json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n"
-    lock = _get_log_lock(str(path))
-    with lock:
+    with _locked_log(path):
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "a", encoding="utf-8") as f:
             f.write(line)
@@ -76,17 +94,10 @@ def append_event(root: Path, event: dict[str, Any]) -> str:
 
 
 def consume_token(root: Path, *, token: str, plan: dict[str, Any], backend: str) -> dict[str, Any]:
-    """Atomically check-then-consume a token under the audit log lock.
-
-    The previous implementation had a TOCTOU race: is_token_consumed read
-    the log, append_event wrote to it, but the lock only protected the
-    write — two concurrent calls could both pass the check. Now the
-    check+write happens atomically inside the same lock acquire.
-    """
+    """Atomically check and consume a token across threads and processes."""
     path = safety_log_path(root)
     target_hash = token_hash(token)
-    lock = _get_log_lock(str(path))
-    with lock:
+    with _locked_log(path):
         # Re-check inside the lock to make check+consume atomic.
         already_consumed = False
         if path.exists():

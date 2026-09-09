@@ -67,7 +67,11 @@ def execute_plan(plan: dict[str, Any], *, token: str, backend: str = "") -> dict
         }
     token_ok = hardware_action_plan.verify_confirmation_token(action, record, token)
 
-    requires_confirmation = bool(plan.get("hardware_side_effect") or plan.get("controlled_local_action"))
+    requires_confirmation = bool(
+        action in hardware_action_plan.HARDWARE_ACTIONS | hardware_action_plan.CONTROLLED_LOCAL_ACTIONS
+        or plan.get("hardware_side_effect")
+        or plan.get("controlled_local_action")
+    )
     if requires_confirmation and not token_ok:
         return {
             "schema_version": 1,
@@ -90,6 +94,14 @@ def execute_plan(plan: dict[str, Any], *, token: str, backend: str = "") -> dict
             "value_safety": value_safety,
         }
     root = Path(plan["root"]).resolve()
+    if requires_confirmation and (not record.get("root") or root != Path(record["root"]).resolve()):
+        return {
+            "schema_version": 1,
+            "status": "blocked-plan-root-mismatch",
+            "action": action,
+            "executed": False,
+            "error": "execution root does not match the confirmed workspace",
+        }
     artifact_check = verify_artifact_hash(record, root=root)
     if artifact_check["status"] != "ok":
         return {
@@ -102,6 +114,14 @@ def execute_plan(plan: dict[str, Any], *, token: str, backend: str = "") -> dict
         }
 
     selected_backend = backend or record.get("backend") or "fake"
+    if selected_backend != record.get("backend") and selected_backend not in PREFLIGHT_BACKENDS | {"fake"}:
+        return {
+            "schema_version": 1,
+            "status": "blocked-backend-mismatch",
+            "action": action,
+            "executed": False,
+            "error": "execution backend does not match the confirmed backend",
+        }
     if selected_backend in PREFLIGHT_BACKENDS:
         result = execute_bench_preflight(plan, token=token, backend=selected_backend)
         return result

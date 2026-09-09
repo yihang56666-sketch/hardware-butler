@@ -1,5 +1,7 @@
 # STM32 小型四旋翼无人机方案汇总
 
+> 历史待核草案，未证明通过设计门控。器件参数和连接建议不得直接作为实机依据；具体缺口见本目录 README.md。
+
 **Project:** STM32 Small Quadrotor Drone
 **Version:** 0.1
 **Date:** 2026-06-01

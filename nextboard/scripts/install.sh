@@ -79,18 +79,14 @@ show_status() {
 # ── install actions ─────────────────────────────────────────────────
 
 install_global_claude() {
-  local enhanced="${1:-false}"
-
   mkdir -p "$HOME/.claude/skills"
   rm -rf "$HOME/.claude/skills/hardware-solution"
   cp -r "$REPO_ROOT/skills/hardware-solution" "$HOME/.claude/skills/"
   info "Skill installed to ~/.claude/skills/hardware-solution"
 
-  if [ "$enhanced" = "true" ]; then
-    mkdir -p "$HOME/.claude/agents"
-    cp "$REPO_ROOT/agents/hardware-reviewer.md" "$HOME/.claude/agents/"
-    info "Agent installed to ~/.claude/agents/hardware-reviewer.md"
-  fi
+  mkdir -p "$HOME/.claude/agents"
+  cp "$REPO_ROOT/agents/hardware-reviewer.md" "$HOME/.claude/agents/"
+  info "Reviewer document installed to ~/.claude/agents/hardware-reviewer.md"
 
   echo ""
   warn "Hooks are not available in global mode (requires plugin context)."
@@ -181,27 +177,41 @@ install_project() {
 }
 
 uninstall_project() {
-  local project_path="$1"
-  local dest="$project_path/.nextboard"
-  local plugin_dir="$project_path/.claude-plugin"
+  if [ -z "$1" ] || [ ! -d "$1" ]; then
+    error "An existing project directory is required."
+    return 1
+  fi
+  local project_path
+  project_path="$(cd -- "$1" && pwd -P)"
+  if [ "$project_path" = "/" ]; then
+    error "Refusing to uninstall from a filesystem root."
+    return 1
+  fi
   local codex_dir="$project_path/.codex"
-
-  # clean up legacy and current project-level installations
-  local found=false
-  for d in "$dest" "$plugin_dir" "$project_path/skills" "$project_path/agents" "$project_path/hooks"; do
-    if [ -d "$d" ]; then
-      rm -rf "$d"
-      found=true
+  local skill_dir="$codex_dir/skills/hardware-solution"
+  local reviewer="$codex_dir/agents/hardware-reviewer.md"
+  local target
+  for target in "$codex_dir" "$codex_dir/skills" "$codex_dir/agents" "$skill_dir" "$reviewer"; do
+    if [ -L "$target" ]; then
+      error "Refusing to uninstall through a symbolic link: $target"
+      return 1
+    fi
+    if [ -d "$target" ]; then
+      local resolved
+      resolved="$(cd -- "$target" && pwd -P)"
+      if [ "$resolved" != "$target" ]; then
+        error "Refusing to uninstall through a redirected directory: $target"
+        return 1
+      fi
     fi
   done
-
-  # clean Codex project-level installation
-  if [ -d "$codex_dir/skills/hardware-solution" ]; then
-    rm -rf "$codex_dir/skills/hardware-solution"
+  local found=false
+  if [ -d "$skill_dir" ]; then
+    rm -rf -- "$skill_dir"
     found=true
   fi
-  if [ -f "$codex_dir/agents/hardware-reviewer.md" ]; then
-    rm -f "$codex_dir/agents/hardware-reviewer.md"
+  if [ -f "$reviewer" ]; then
+    rm -f -- "$reviewer"
     found=true
   fi
 
@@ -210,25 +220,8 @@ uninstall_project() {
     return
   fi
 
-  # clean .gitignore entries
-  local gitignore="$project_path/.gitignore"
-  if [ -f "$gitignore" ]; then
-    local tmp
-    tmp="$(mktemp)"
-    grep -vxF '.nextboard/' "$gitignore" \
-      | grep -vxF '.claude-plugin/' \
-      | grep -vxF 'skills/' \
-      | grep -vxF 'agents/' \
-      | grep -vxF 'hooks/' > "$tmp" || true
-    if [ -s "$tmp" ]; then
-      mv "$tmp" "$gitignore"
-    else
-      rm -f "$tmp" "$gitignore"
-    fi
-    info "Cleaned .gitignore"
-  fi
-
-  info "Removed legacy project-level files."
+  info "Removed only the named NextBoard Codex skill and reviewer document."
+  warn "Legacy .nextboard, .claude-plugin, skills, agents, hooks and .gitignore are preserved; review ownership manually."
   info "If using --plugin-dir, no further cleanup needed."
 }
 
@@ -275,7 +268,7 @@ interactive() {
   printf "${BOLD}Choose installation method:${RESET}\n"
   echo ""
   echo "  1) Global install — copy skill/agent to home directory, all projects can use"
-  echo "     Components: skill + agent (Claude Code), skill only (Codex)"
+  echo "     Components: skill + reviewer document (Claude Code and Codex)"
   echo "     Limitation: hooks not available"
   echo ""
   echo "  2) Project-level usage — show how to load plugin in a specific project"
@@ -294,20 +287,13 @@ interactive() {
       echo ""
       printf "${BOLD}Target platform:${RESET}\n"
       echo "  1) Claude Code (skill + agent)"
-      echo "  2) Codex (skill only)"
+      echo "  2) Codex (skill + reviewer document)"
       echo ""
       read -rp "Select [1-2]: " platform
 
       case "$platform" in
         1)
-          echo ""
-          read -rp "Include review agent? (enhanced install) [Y/n]: " agent_choice
-          agent_choice="${agent_choice:-Y}"
-          if [[ "$agent_choice" =~ ^[Yy] ]]; then
-            install_global_claude true
-          else
-            install_global_claude false
-          fi
+          install_global_claude
           ;;
         2)
           install_global_codex

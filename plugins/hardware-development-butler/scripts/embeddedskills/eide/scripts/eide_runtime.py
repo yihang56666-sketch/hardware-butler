@@ -218,8 +218,18 @@ def _auto_detect_code() -> str:
     if code:
         return str(Path(code).resolve())
     candidates = [
-        r"C:\Program Files\Microsoft VS Code\bin\code.cmd",
-        r"C:\Program Files (x86)\Microsoft VS Code\bin\code.cmd",
+        os.path.join(
+            os.environ.get("ProgramFiles", ""),
+            "Microsoft VS Code",
+            "bin",
+            "code.cmd",
+        ),
+        os.path.join(
+            os.environ.get("ProgramFiles(x86)", ""),
+            "Microsoft VS Code",
+            "bin",
+            "code.cmd",
+        ),
         os.path.join(
             os.environ.get("LOCALAPPDATA", ""),
             "Programs",

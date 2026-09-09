@@ -227,9 +227,15 @@ def _apply_fix_parsed(parsed: dict[str, Any], state: dict[str, Any]) -> dict[str
     """Apply a parsed failure-analysis JSON to workflow state (shared by the
     direct-LLM path and the host-agent resume path)."""
     if isinstance(parsed.get("patch_fields"), dict):
+        requirements = next(
+            (stage.get("evidence", {}).get("parsed_requirements") for stage in state.get("stages", []) if stage["id"] == "requirement-parse"),
+            None,
+        )
         for key in ("feature", "function", "pin", "instance", "part"):
             if parsed["patch_fields"].get(key):
                 state["context"][key] = str(parsed["patch_fields"][key]).strip()
+                if isinstance(requirements, dict):
+                    requirements[key] = state["context"][key]
     accepted_overrides: list[str] = []
     rejected_overrides: list[str] = []
     if isinstance(parsed.get("patch_files"), dict):
@@ -325,6 +331,12 @@ def run_workflow(root: Path, state: dict[str, Any]) -> dict[str, Any]:
                 and stage.get("evidence", {}).get("llm_fix_pending")
             ):
                 analysis = _consume_fix_response(root, state, stage)
+                if analysis is None:
+                    state["status"] = "blocked-needs-input"
+                    state["current_stage"] = stage["id"]
+                    state["updated_at"] = _now_iso()
+                    write_workflow_state(root, state)
+                    return state
                 if analysis:
                     stage["evidence"].pop("llm_fix_pending", None)
                     state["status"] = "retrying"
@@ -356,6 +368,8 @@ def run_workflow(root: Path, state: dict[str, Any]) -> dict[str, Any]:
                     result = StageResult(status="failed", error=f"{type(exc).__name__}: {exc}")
                 stage["finished_at"] = _now_iso()
                 stage["status"] = result.status
+                if result.status == "blocked-needs-input":
+                    stage["attempts"] -= 1
                 stage["error"] = result.error
                 stage["evidence"] = result.evidence
                 state["updated_at"] = _now_iso()
@@ -981,6 +995,13 @@ def _stage_firmware_plan(
     except Exception as exc:  # noqa: BLE001
         patch_evidence = {"error": f"firmware code generation failed: {exc}"}
 
+    if patch_evidence.get("error") or patch_evidence.get("files_skipped") or not patch_evidence.get("files_written"):
+        return StageResult(
+            status="failed",
+            evidence={"firmware_plan": plan, "firmware_patch": patch_evidence, "llm_codegen": codegen_evidence},
+            error="firmware files were not fully generated and written; refusing to build stale or partial code",
+        )
+
     # Ensure the project is actually compilable: stub main.c gets replaced
     # with one that calls the app module; main.h is created if missing; a
     # real CubeMX main.c gets USER CODE insertions instead.
@@ -1215,12 +1236,8 @@ def _stage_build(
                     "build_backend": adapter.family,
                 },
             )
-        # P3 Step G: adapter native build path stays best-effort (completed even
-        # on error). Only PlatformIO build failure triggers optimize-loop, since
-        # adapter native commands may run on partial projects (e.g. cmake on a
-        # directory without CMakeLists.txt).
         return StageResult(
-            status="completed",
+            status="completed" if build_executed else "failed",
             evidence={
                 "build_plan": plan,
                 "build_executed": build_executed,
@@ -1229,7 +1246,7 @@ def _stage_build(
                 "build_result": result,
                 "build_log": build_log[-4000:],
             },
-            error="",
+            error="" if build_executed else f"native build failed ({result['status']}); see build_log",
         )
 
     chip_stage = next((s for s in state["stages"] if s["id"] == "chip-selection"), None)
@@ -1277,8 +1294,9 @@ def _stage_flash(
     """Generate a no-hardware bench runbook + confirmation-gated action plan.
 
     Does NOT execute real flashing. The runbook aggregates readiness, action
-    plan, preflight, and a workflow_run.py --dry-run subprocess. Real flash
-    stays behind HARDWARE_BUTLER_ENABLE_REAL_FLASH + confirmation token.
+    plan, preflight, and a workflow_run.py --dry-run subprocess. Physical
+    requests are blocked here; workflow goal tokens do not authorize them.
+    Use a reviewed hardware_action_executor plan after bench validation.
 
     On first entry to this stage for a workflow, mints a goal_token that
     authorises repeated build-flash/flash-debug within the same workflow_id,
@@ -1399,53 +1417,14 @@ def _stage_flash(
                         "artifact_check": artifact_check,
                     }
         if status == "completed":
-            adapter = _get_vendor_adapter(state)
-            if adapter:
-                flash_ctx = {
-                    "target": target,
-                    "port": state.get("context", {}).get("probe", ""),
-                    "elf": state.get("context", {}).get("elf", "") or "build/firmware.elf",
-                    "probe": ctx.probe,
-                }
-                # P3 Step F: prefer probe-rs for cross-vendor flash, fall back
-                # to adapter native flash_command, then to embeddedskills scripts.
-                # The chain advances on ATTEMPT, not on result truthiness: a
-                # failed probe-rs run still produces a truthy result dict, and
-                # gating the fallbacks on it would strand the board with no
-                # flash attempt from any other backend.
-                probe_rs_cmd = adapter.flash_via_probe_rs(flash_ctx)
-                if probe_rs_cmd:
-                    flash_result = _run_subprocess(probe_rs_cmd, timeout_s=120)
-                    flash_executed = flash_result["status"] == "ok"
-                    flash_backend_used = "probe-rs"
-                    status = "completed" if flash_executed else "failed"
-                if not flash_executed:
-                    cmd = adapter.flash_command(flash_ctx)
-                    if cmd:
-                        flash_result = _run_subprocess(cmd, timeout_s=120)
-                        flash_executed = flash_result["status"] == "ok"
-                        flash_backend_used = adapter.family
-                        status = "completed" if flash_executed else "failed"
-            if not flash_executed:
-                chip_stage = next((s for s in state["stages"] if s["id"] == "chip-selection"), None)
-                backends = (chip_stage or {}).get("evidence", {}).get("backends", {}) if chip_stage else {}
-                flash_backend = backends.get("backends", {}).get("flash", "unknown") if isinstance(backends.get("backends"), dict) else "unknown"
-                script_map = {
-                    "openocd": "openocd/scripts/openocd_run.py",
-                    "jlink": "jlink/scripts/jlink_exec.py",
-                    "probe-rs": "probe-rs/scripts/probe_rs_exec.py",
-                }
-                script = script_map.get(flash_backend)
-                if script:
-                    flash_args = ["--workspace", str(root), "--action", "flash"]
-                    if target:
-                        flash_args.extend(["--target", target])
-                    if ctx.probe:
-                        flash_args.extend(["--probe", ctx.probe])
-                    flash_result = _run_embeddedskills_script(script, flash_args, timeout_s=120)
-                    flash_executed = flash_result["status"] == "ok"
-                    flash_backend_used = flash_backend
-                    status = "completed" if flash_executed else "failed"
+            status = "blocked-needs-input"
+            flash_result = {
+                "status": "blocked-real-backend-not-enabled",
+                "stderr": (
+                    "workflow goal tokens do not authorize physical flash; use a reviewed "
+                    "hardware_action_executor plan after backend-specific bench validation"
+                ),
+            }
 
     return StageResult(
         status=status,
@@ -1466,7 +1445,7 @@ def _stage_flash(
             "flash_result": flash_result,
             "flash_backend": flash_backend_used,
         },
-        error="" if status == "completed" else f"goal_token check failed: {check.get('reason', '')}",
+        error="" if status == "completed" else str(flash_result.get("stderr") or f"goal_token check failed: {check.get('reason', '')}"),
     )
 
 
@@ -1847,14 +1826,11 @@ def _stage_debug_observe(
     ctx: WorkflowContext,
     state: dict[str, Any],
 ) -> StageResult:
-    """Observe hardware signals. Uses real serial/RTT backend when a probe is
-    available; falls back to sim mode otherwise.
+    """Return simulated or explicitly labeled emulator signal evidence.
 
-    Real observation: if the host has a serial port configured (ctx.probe
-    starts with "COM" or "/dev/tty") OR HARDWARE_BUTLER_ENABLE_REAL_FLASH=1
-    with a jlink/openocd probe, runs the embeddedskills serial/jlink_rtt
-    script for a short capture window and matches expected signals in the
-    output. Otherwise sim mode.
+    Physical capture requests stay blocked until a reviewed executor plan
+    and backend-specific bench validation authorize them. A serial probe
+    identifier or workflow goal token alone cannot enable hardware access.
     """
     plan = _firmware_plan_evidence(state)
     if plan is None:
@@ -1874,40 +1850,19 @@ def _stage_debug_observe(
     real_capture = ""
     observe_mode = "sim"
     observe_errors: list[dict[str, str]] = []
-    chip_stage = next((s for s in state["stages"] if s["id"] == "chip-selection"), None)
     enable_real = os.environ.get("HARDWARE_BUTLER_ENABLE_REAL_FLASH") == "1"
     if enable_real:
-        # Bounded, non-interactive capture window (interactive tools like
-        # miniterm or `probe-rs rtt attach` hang under captured stdout and
-        # never produce output, so they must not be used here).
-        window_s = _observe_window_s()
-        selected_part = ""
-        if chip_stage and chip_stage["status"] == "completed":
-            selected_part = chip_stage.get("evidence", {}).get("selected_part", "")
-        port = str(ctx.probe or state.get("context", {}).get("probe", ""))
-        if port.upper().startswith("COM") or port.startswith("/dev/"):
-            args = ["--port", port, "--timeout", str(window_s), "--json"]
-            result = _run_embeddedskills_script("serial/scripts/serial_monitor.py", args, timeout_s=int(window_s) + 30)
-            if result["status"] == "ok":
-                real_capture = _extract_stream_text(result.get("stdout", ""))
-                observe_mode = "pyserial-window"
-            else:
-                observe_errors.append({"backend": "serial_monitor", "reason": result.get("stderr", "")[-300:]})
-        import shutil as _shutil
-        if not real_capture and selected_part and _shutil.which("probe-rs"):
-            args = ["--chip", selected_part, "--duration", str(window_s), "--workspace", str(root), "--json"]
-            result = _run_embeddedskills_script("probe-rs/scripts/probe_rs_rtt.py", args, timeout_s=int(window_s) + 45)
-            if result["status"] == "ok":
-                real_capture = _extract_stream_text(result.get("stdout", ""))
-                observe_mode = "probe-rs-rtt-window"
-            else:
-                observe_errors.append({"backend": "probe_rs_rtt", "reason": result.get("stderr", "")[-300:]})
-        # NOTE: deliberately NO adapter.observe_command() fallback here — for
-        # every family it returns an INTERACTIVE tool (serial.tools.miniterm /
-        # `probe-rs rtt attach`) that cannot terminate on its own; running it
-        # would burn the whole window + 30s timeout and log terminal escape
-        # garbage instead of firmware output. The windowed pyserial / RTT
-        # scripts above are the only non-interactive real-observe backends.
+        return StageResult(
+            status="blocked-needs-input",
+            evidence={
+                "mode": "blocked-real-backend-not-enabled",
+                "signals": signals,
+                "observations": [],
+                "hardware_observed": False,
+                "capture": "",
+            },
+            error="physical observe requires a reviewed hardware_action_executor plan and backend-specific bench validation",
+        )
 
     observations = []
     sim_capture = ""

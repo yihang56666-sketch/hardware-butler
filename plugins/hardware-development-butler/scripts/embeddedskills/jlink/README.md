@@ -26,10 +26,10 @@ Claude Code skill，通过 J-Link 探针进行嵌入式设备的固件烧录、�
 
 ```json
 {
-  "exe": "C:\\Program Files\\SEGGER\\JLink\\JLink.exe",
-  "gdbserver_exe": "C:\\Program Files\\SEGGER\\JLink\\JLinkGDBServerCL.exe",
-  "rtt_exe": "C:\\Program Files\\SEGGER\\JLink\\JLinkRTTClient.exe",
-  "gdb_exe": "C:\\Program Files\\Arm\\GNU Toolchain mingw-w64-x86_64-arm-none-eabi\\bin\\arm-none-eabi-gdb.exe",
+  "exe": "<SEGGER-install-root>/JLink.exe",
+  "gdbserver_exe": "<SEGGER-install-root>/JLinkGDBServerCL.exe",
+  "rtt_exe": "<SEGGER-install-root>/JLinkRTTClient.exe",
+  "gdb_exe": "<Arm-toolchain-install-root>/bin/arm-none-eabi-gdb.exe",
   "serial_no": "",
   "rtt_telnet_port": 0,
   "swo_command": [],

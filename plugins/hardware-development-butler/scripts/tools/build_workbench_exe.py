@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -11,16 +12,20 @@ ROOT = Path(__file__).resolve().parents[1]
 DIST = ROOT / "dist"
 WORK = ROOT / "build" / "pyinstaller"
 SPECS = ROOT / "build" / "specs"
-KNOWN_PYINSTALLER = Path("D:/zonghesheji/tools/Python313/Scripts/pyinstaller.exe")
+ENV_PYINSTALLER = "HW_BUTLER_PYINSTALLER"
 
 
 def pyinstaller_path() -> str:
+    override = os.getenv(ENV_PYINSTALLER)
+    if override:
+        return override
     found = shutil.which("pyinstaller")
     if found:
         return found
-    if KNOWN_PYINSTALLER.exists():
-        return str(KNOWN_PYINSTALLER)
-    raise SystemExit("PyInstaller was not found. Install it with: pip install pyinstaller")
+    raise SystemExit(
+        "PyInstaller was not found. Install it with pip install pyinstaller or set "
+        f"{ENV_PYINSTALLER} to the PyInstaller executable."
+    )
 
 
 def run(command: list[str]) -> None:

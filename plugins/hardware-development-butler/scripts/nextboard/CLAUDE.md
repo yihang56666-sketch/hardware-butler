@@ -35,7 +35,7 @@ scripts/install.sh --status
 - 器件参数必须来自数据手册或分销商页面，禁止凭记忆回答。
 - 每个关键选择必须说明取舍，不能只列器件。
 - 风险清单不能为空，高风险项必须有验证动作。
-- 方案输出前必须通过 `skills/hardware-solution/references/verification-gates.md` 的 5 道门控。
+- 正式方案须通过 `skills/hardware-solution/references/verification-gates.md` 的 Gate 1–5；用户请求模块原理图时另过可选 Gate 6，否则记录不适用。静态校验不等于方案门控通过，缺证据只交付标注待核的草案。
 
 ## 关键文件
 

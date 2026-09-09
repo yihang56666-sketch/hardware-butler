@@ -96,7 +96,20 @@ def analyze_risks(
             )
         )
 
-    config = read_project_config(root)
+    try:
+        config = read_project_config(root)
+    except (OSError, ValueError) as exc:
+        config = {}
+        risks.append(
+            risk(
+                "project_config_invalid",
+                "high",
+                "debug",
+                f"Project configuration could not be validated: {exc}",
+                "Repair .embeddedskills/config.json and rerun the risk review before hardware-facing actions.",
+                [{"path": ".embeddedskills/config.json", "line": "unknown", "note": "invalid or unreadable configuration"}],
+            )
+        )
     auto_preferences = auto_hardware_preferences(config)
     if auto_preferences:
         risks.append(
@@ -183,11 +196,12 @@ def read_project_config(root: Path) -> dict[str, Any]:
     path = root / ".embeddedskills" / "config.json"
     if not path.exists():
         return {}
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-    return data if isinstance(data, dict) else {}
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError("project configuration must be a JSON object")
+    if "workflow" in data and not isinstance(data["workflow"], dict):
+        raise ValueError("project configuration workflow must be a JSON object")
+    return data
 
 
 def auto_hardware_preferences(config: dict[str, Any]) -> list[str]:

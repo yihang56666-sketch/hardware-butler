@@ -1,9 +1,7 @@
-"""Tests for Step H: end-to-end mock-mode 9-stage workflow + real-mode switch docs.
+"""Offline end-to-end mock workflow and fail-closed physical mode tests.
 
-Verifies that all 9 stages run to completion in mock mode (default, no
-HARDWARE_BUTLER_ENABLE_REAL_FLASH) on the cubemx-basic fixture. The code
-path is identical to real mode — only the data source differs (mock returns
-fake data, real mode calls real tools).
+The default simulated workflow completes its nine stages. A physical request
+must stop at the execution boundary rather than reusing mock authorization.
 """
 
 from __future__ import annotations
@@ -89,37 +87,23 @@ def test_e2e_mock_mode_verify_goal_returns_behavior_mock(cubemx_basic_fixture: P
     assert verify_stage["evidence"]["observe_mode"] == "sim"
 
 
-def test_e2e_mock_mode_real_mode_switch_keeps_code_path_identical(cubemx_basic_fixture: Path, tmp_path: Path) -> None:
-    """Setting HARDWARE_BUTLER_ENABLE_REAL_FLASH=1 switches data source
-    but the stage dispatch code path is identical (same _dispatch_stage call).
-
-    We stub _run_subprocess so that real tool invocation doesn't actually
-    happen (no toolchain on host); this verifies the code path is wired up
-    correctly without requiring real hardware.
-    """
-    import os
+def test_e2e_real_request_stops_before_physical_flash(cubemx_basic_fixture: Path, tmp_path: Path) -> None:
+    """Environment opt-in cannot upgrade a simulated workflow to physical execution."""
     from unittest.mock import patch
+
     project = _copy_fixture(cubemx_basic_fixture, tmp_path)
     ctx = wr.WorkflowContext(feature="led-blink", pin="PD12", function="gpio-output")
     state = wr.init_workflow(project, intent="develop-feature", goal="LED blink", context=ctx)
+    with (
+        patch.dict("os.environ", {"HARDWARE_BUTLER_ENABLE_REAL_FLASH": "1"}),
+        patch("workflow_runner._run_subprocess") as run,
+    ):
+        result = wr.run_workflow(project, state)
 
-    def stub_subprocess(cmd, *, timeout_s=120):
-        # Return content that satisfies _verify_signal for LED signal.
-        # Applies to all subprocess calls (build, flash, observe) since this
-        # test verifies code path wiring, not actual tool behavior.
-        return {"status": "ok", "returncode": 0, "stdout": "LED toggle on", "stderr": ""}
-
-    old = os.environ.get("HARDWARE_BUTLER_ENABLE_REAL_FLASH")
-    os.environ["HARDWARE_BUTLER_ENABLE_REAL_FLASH"] = "1"
-    try:
-        with patch("workflow_runner._run_subprocess", side_effect=stub_subprocess):
-            result = wr.run_workflow(project, state)
-    finally:
-        if old is None:
-            os.environ.pop("HARDWARE_BUTLER_ENABLE_REAL_FLASH", None)
-        else:
-            os.environ["HARDWARE_BUTLER_ENABLE_REAL_FLASH"] = old
-
-    assert result["status"] == "completed"
-    obs_stage = next(s for s in result["stages"] if s["id"] == "debug-observe")
-    assert obs_stage["status"] == "completed"
+    assert result["status"] == "blocked-needs-input"
+    flash_stage = next(stage for stage in result["stages"] if stage["id"] == "flash")
+    assert flash_stage["evidence"]["flash_executed"] is False
+    assert flash_stage["evidence"]["flash_result"]["status"] == "blocked-real-backend-not-enabled"
+    observe_stage = next(stage for stage in result["stages"] if stage["id"] == "debug-observe")
+    assert observe_stage["status"] == "pending"
+    run.assert_not_called()

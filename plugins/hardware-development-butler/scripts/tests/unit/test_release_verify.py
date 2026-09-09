@@ -1,8 +1,25 @@
 from __future__ import annotations
 
+import sys
 from types import SimpleNamespace
 
 from tools import release_verify
+
+
+def test_python_tools_use_the_running_interpreter_not_unrelated_path_executables() -> None:
+    for step in release_verify.STEPS:
+        if step.name in {"quick-tests", "lint", "typecheck", "tests"}:
+            assert step.command[:2] == (sys.executable, "-m")
+
+
+def test_missing_command_reports_a_failed_step_without_a_traceback(monkeypatch, capsys) -> None:
+    def missing(*args: object, **kwargs: object) -> None:
+        raise FileNotFoundError("tool unavailable")
+
+    monkeypatch.setattr(release_verify.subprocess, "run", missing)
+    step = release_verify.Step("missing", ("not-installed",), frozenset({"quick"}), "missing executable")
+    assert release_verify.run_steps([step]) == 127
+    assert "FAILED missing" in capsys.readouterr().err
 
 
 def test_quick_profile_covers_no_hardware_demo_and_plugin_sync() -> None:

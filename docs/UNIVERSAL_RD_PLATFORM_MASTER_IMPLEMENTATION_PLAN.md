@@ -604,7 +604,7 @@ Candidate sources: PATH, configured paths, Windows uninstall/application metadat
 conservative known locations. Probe with argument arrays, `shell=False`, timeout,
 bounded output, and no writes.
 
-Mandatory regression: `D:\STM32CubeMX\jre\bin\jlink.exe` identifies as Java image
+Mandatory regression: `<STM32CubeMX-install-root>\jre\bin\jlink.exe` identifies as Java image
 linker and never receives `flash` or `debug-probe` capabilities. SEGGER J-Link requires
 vendor output. Filename-only matches remain `unverified`.
 
@@ -938,7 +938,7 @@ inspect project, identify entry point and board hints, validate syntax/import la
 index vision assets/models, collect logs, and create run/deploy plans. Real device upload
 or run must use a verified tool/device adapter and confirmed task.
 
-Validate using `D:\maixcam_E12_TASK1_ONLY` and user-selected Maix/OpenMV projects, but
+Validate using `<maixcam-sample-project-root>` and user-selected Maix/OpenMV projects, but
 commit only minimal synthetic fixtures.
 
 ### Task 8.4: EDA/BOM/document adapter
@@ -1181,11 +1181,11 @@ Use user-selected roots and sanitize stored evidence:
 | Scenario | Expected result |
 | --- | --- |
 | STM32 fixture/project | detect CubeMX/Keil/CMake facets, inspect, plan build, archive evidence |
-| `D:\电赛准备\26\mock-problems\2026-control\...` | detect real CMake projects without scanning unrelated disk content |
-| `D:\maixcam_E12_TASK1_ONLY` | detect MaixCAM and STM32 facets as one multi-facet project or linked projects based on root structure |
-| `D:\openmv` installation | classify installation/SDK content as excluded, not a user project |
+| `<embedded-competition-project-root>\mock-problems\2026-control\...` | detect real CMake projects without scanning unrelated disk content |
+| `<maixcam-sample-project-root>` | detect MaixCAM and STM32 facets as one multi-facet project or linked projects based on root structure |
+| `<openmv-install-root>` | classify installation/SDK content as excluded, not a user project |
 | user OpenMV script | classify user project and create inspect/run plan |
-| `D:\STM32CubeMX\jre\bin\jlink.exe` | classify as Java jlink, never SEGGER |
+| `<STM32CubeMX-install-root>\jre\bin\jlink.exe` | classify as Java jlink, never SEGGER |
 | serial/CAN/network adapters | enumerate only; transmit/connect requires confirmation |
 | no AI profile | all deterministic onboarding/build/diagnostic flows remain usable |
 | fake or user-configured AI | explanation works; unknown command/capability is rejected |

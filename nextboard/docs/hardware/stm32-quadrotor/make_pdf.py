@@ -1,3 +1,4 @@
+import os
 import re
 from pathlib import Path
 
@@ -29,9 +30,9 @@ FILES = [
 
 def register_font() -> str:
     candidates = [
-        Path(r"C:\Windows\Fonts\msyh.ttc"),
-        Path(r"C:\Windows\Fonts\simhei.ttf"),
-        Path(r"C:\Windows\Fonts\simsun.ttc"),
+        Path(os.environ.get("WINDIR", "/Windows")) / "Fonts" / "msyh.ttc",
+        Path(os.environ.get("WINDIR", "/Windows")) / "Fonts" / "simhei.ttf",
+        Path(os.environ.get("WINDIR", "/Windows")) / "Fonts" / "simsun.ttc",
     ]
     for path in candidates:
         if path.exists():

@@ -17,9 +17,9 @@
   3. `frequency_hz` — measures actual toggle frequency from timestamps, ±50% tolerance.
   4. `kind-keyword fallback` for 9 kinds: led / uart / rtt / swo / i2c / spi / adc / pwm / can (Phase 11 extension). CAN keyword list intentionally avoids bare `id`.
   5. QEMU behavior emulation (`qemu_behavior_check.run_behavior_check`).
-- GUI has 12 tabs including the Phase 6 "工具" tab consolidating 6 high-value CLI subcommands + LLM provider config panel.
+- GUI has 13 tabs including the Phase 6 "工具" tab consolidating 6 high-value CLI subcommands + LLM provider config panel.
 - Plugin-sync pre-commit hook (`tools/install_plugin_sync_hook.py`) auto-syncs `plugins/.../scripts/` on commit when source changes.
-- Test baseline: **805 passed / 10 skipped**, ruff clean, mypy clean on tools/ (72 source files).
+- Test baseline: **1017 passed / 12 skipped**, ruff clean, mypy clean on tools/ (refreshed 2026-09-09; 805/10 at the 2026-08-17 Phase 14 snapshot).
 - Plugin re-synced; `test_plugin_sync` passes (138 subtests).
 
 ### What was actually missing (vs user's stated goal) — all RESOLVED

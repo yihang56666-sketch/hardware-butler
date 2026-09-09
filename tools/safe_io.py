@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import tempfile
 from pathlib import Path
 
 
@@ -24,11 +25,20 @@ def safe_write_text(
         reject_symlink_path(backup)
         backup.write_text(target.read_text(encoding=encoding), encoding=encoding)
 
-    tmp = target.with_name(f".{target.name}.tmp")
-    validate_write_path(tmp, allowed_roots=allowed_roots)
-    reject_symlink_path(tmp)
-    tmp.write_text(content, encoding=encoding)
-    os.replace(tmp, target)
+    tmp: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding=encoding, dir=target.parent,
+            prefix=f".{target.name}.", suffix=".tmp", delete=False,
+        ) as handle:
+            tmp = Path(handle.name)
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, target)
+    finally:
+        if tmp is not None:
+            tmp.unlink(missing_ok=True)
     return str(target)
 
 
@@ -49,11 +59,20 @@ def safe_write_bytes(
         reject_symlink_path(backup)
         backup.write_bytes(target.read_bytes())
 
-    tmp = target.with_name(f".{target.name}.tmp")
-    validate_write_path(tmp, allowed_roots=allowed_roots)
-    reject_symlink_path(tmp)
-    tmp.write_bytes(content)
-    os.replace(tmp, target)
+    tmp: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb", dir=target.parent, prefix=f".{target.name}.",
+            suffix=".tmp", delete=False,
+        ) as handle:
+            tmp = Path(handle.name)
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, target)
+    finally:
+        if tmp is not None:
+            tmp.unlink(missing_ok=True)
     return str(target)
 
 

@@ -16,7 +16,7 @@ from typing import Any, Literal
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OWNER = "yihang56666-sketch"
-DEFAULT_REPO = "NextBoard"
+DEFAULT_REPO = "hardware-butler"
 DEFAULT_BRANCH = "main"
 DEFAULT_WORKFLOW = "ci.yml"
 EXPECTED_DESCRIPTION = (

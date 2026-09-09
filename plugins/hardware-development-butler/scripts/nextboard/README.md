@@ -15,9 +15,9 @@ Agent会自动帮你进行需求确认，实时分析国内外各类芯片技术
 
 ## 功能概览
 
-- 结构化的 7 阶段设计流程：需求冻结 → 架构候选 → 系统分解 → 器件选型 → 输出生成 → 评审 → 验证门控
+- 分阶段设计流程：需求冻结 → 架构候选 → 系统分解/选型 → 资料核验 → 约束/验证计划 → 决策/独立评审 → 可选原理图 → 报告
 - 三类架构候选对比：国产优先、海外主流、混合折中
-- 5 道验证门控，阶段性拦截质量问题
+- Gate 1–5 为必需验证门，用户请求模块原理图时增加可选 Gate 6；不适用时记录原因
 - 独立评审 agent，从完整性、风险、可实施性、成本、验证覆盖 5 个维度打分
 - 供应链风险评估与国产替代参考
 
@@ -37,6 +37,8 @@ $hardware-solution
 ```
 
 输入产品需求即可进入设计流程。
+
+源码的主入口是 [skills/hardware-solution/SKILL.md](skills/hardware-solution/SKILL.md)。`hermes_launcher_gui.py` 是独立的历史 Hermes/日报启动器，含个人本机路径和配置写入逻辑，不是 Hardware Butler GUI，也不是本技能的安装或演示入口。硬件管家源码 GUI 位于父工作区的 `gui/`。
 
 ## 安装
 
@@ -109,12 +111,12 @@ cd NextBoard
 Claude Code：
 
 ```bash
-# 基础安装（skill）
+# 完整源码安装（skill + reviewer 文档）
 mkdir -p "$HOME/.claude/skills"
 rm -rf "$HOME/.claude/skills/hardware-solution"
 cp -r skills/hardware-solution "$HOME/.claude/skills/"
 
-# 增强安装（额外安装独立评审 agent）
+# reviewer 是技能相对链接所需内容，不应遗漏
 mkdir -p "$HOME/.claude/agents"
 cp agents/hardware-reviewer.md "$HOME/.claude/agents/"
 ```
@@ -131,6 +133,8 @@ cp agents/hardware-reviewer.md "$HOME/.codex/agents/"
 ```
 
 > 全局安装的局限：hooks 无法生效（缺少插件上下文）。
+
+reviewer Markdown 的复制不保证目标客户端已注册可调度 agent。客户端支持独立 agent 时使用它；否则按文档五维自检并明确标为非独立，待人工复核，不能把自检算作 Gate 5 PASS。
 
 #### 方式二：--plugin-dir（推荐开发调试）
 
@@ -181,6 +185,8 @@ rm -rf "$HOME/.codex/skills/hardware-solution"
 rm -f "$HOME/.codex/agents/hardware-reviewer.md"
 ```
 
+项目级卸载仅移除指定项目 `.codex/skills/hardware-solution` 和 `.codex/agents/hardware-reviewer.md`，拒绝通过符号链接/重定向目录删除。不会删除通用 `skills/`、`agents/`、`hooks/`、`.claude-plugin/`、旧 `.nextboard/` 或改写 `.gitignore`；历史文件需人工确认归属后处理。
+
 ## 项目结构
 
 ```
@@ -188,9 +194,10 @@ NextBoard/
 ├── skills/hardware-solution/
 │   ├── SKILL.md                        # 技能入口，定义工作流和输出原则
 │   └── references/
-│       ├── design-workflow.md           # 4 阶段设计工作流
+│       ├── design-workflow.md           # 分阶段设计与交付流程
 │       ├── output-template.md           # 方案输出标准结构
-│       ├── verification-gates.md        # 5 道验证门控
+│       ├── verification-gates.md        # 5 道必需门控 + 可选 Gate 6
+│       ├── download-sources.md          # 项目来源登记的只读模板
 │       ├── review-checklists.md         # 原理图/PCB/BOM/方案评审清单
 │       ├── sourcing-and-risk.md         # 供应链风险评估指南
 │       └── domestic-sources.md          # 国产芯片与元器件参考
@@ -220,19 +227,26 @@ python3 tests/validate.py
 
 # 验证已安装的副本
 python3 tests/validate.py --installed
+
+# 验证 Codex 全局安装，或指定隔离副本
+python3 tests/validate.py --installed --platform codex
+python3 tests/validate.py /path/to/.codex/skills/hardware-solution --installed
 ```
 
-验证覆盖三层检查：
+验证覆盖源码静态结构和内容检查：
 
 | 层 | 内容 |
 |---|---|
 | 结构完整性 | 文件存在、hook 可执行、hook 输出合法 JSON |
-| 内容一致性 | SKILL.md 链接可解析、Gate 非空、输出模板覆盖 Gate 4、评审 agent 覆盖 5 维度 |
+| 内容一致性 | SKILL.md 与 reference 中本地链接的目标文件存在、Gate 非空、输出模板包含决策/门控证据、reviewer 覆盖 5 维度 |
 | 反模式检测 | reference 文档无模糊措辞、无残留占位符 |
+| 平台配置 | 清单存在、配置版本一致、版本更新目标存在 |
+
+安装校验还检查 PDF 脚本、`agents/openai.yaml` 和 reviewer 文档。它不验证远程 URL、标题锚点、价格/库存、datasheet 参数、EDA 文件、客户端实际加载、PDF 渲染或实机结果；这些仍需逐门记录实际证据。`docs/hardware/stm32-quadrotor/` 是历史待核草案，不是通过门控的设计示例。
 
 ## Hooks 说明
 
-`hooks/` 仅在项目级插件模式下自动生效（`.claude-plugin/plugin.json` 声明了 `"hooks": "./hooks/"`）。全局安装不包含 hooks。
+`hooks/hooks.json` 与 `hooks/hooks-cursor.json` 提供对应客户端的会话 hook 配置。全局复制安装不启用 hooks。脚本输出合法 JSON 不代表目标客户端已经加载；插件加载方式须在相应客户端单独验证。
 
 手动验证 hook 输出：
 
@@ -245,7 +259,7 @@ CLAUDE_PLUGIN_ROOT="$PWD" hooks/session-start | python3 -m json.tool
 - 器件参数必须来自数据手册或分销商页面，禁止凭记忆
 - 每个关键选择必须说明取舍，不能只列器件
 - 风险清单不能为空，高风险项必须有验证动作
-- 方案输出前必须通过 `verification-gates.md` 的 5 道门控
+- 正式方案必须通过 Gate 1–5；用户请求原理图时增加可选 Gate 6，未通过只能标注待核草案
 
 ## 贡献规范
 
@@ -259,7 +273,7 @@ CLAUDE_PLUGIN_ROOT="$PWD" hooks/session-start | python3 -m json.tool
 | 平台 | 配置文件 | 全局安装 | 项目级插件 |
 |------|---------|---------|-----------|
 | Claude Code | `.claude-plugin/plugin.json` | skill + agent | skill + agent + hooks |
-| Codex | `.codex-plugin/plugin.json` | skill + agent | 不支持插件模式 |
+| Codex | `.codex-plugin/plugin.json` | skill + reviewer 文档 | 清单/客户端加载兼容性需另行验证 |
 | Cursor | `.cursor-plugin/plugin.json` | skill（手动 cp） | skill + agent + hooks |
 
 ## License

@@ -23,7 +23,7 @@ Windows 下优先使用 `py -3` 调用脚本；若 `arm-none-eabi-gdb` 已在 `P
 ```json
 {
   "exe": "probe-rs",
-  "gdb_exe": "C:\\Program Files\\Arm\\GNU Toolchain mingw-w64-x86_64-arm-none-eabi\\bin\\arm-none-eabi-gdb.exe",
+  "gdb_exe": "<Arm-toolchain-install-root>/bin/arm-none-eabi-gdb.exe",
   "gdb_port": 3333,
   "dap_port": 50000,
   "operation_mode": 1

@@ -51,9 +51,15 @@ def classify_main_c(text: str) -> str:
         return "cubemx"
     if re.search(r"\bMX_\w+_Init\s*\(", text):
         return "custom"
-    stripped = text.strip()
-    if len(stripped.encode("utf-8", errors="replace")) <= STUB_MAX_BYTES and "app_" not in text:
-        return "stub"
+    if len(text.strip().encode("utf-8", errors="replace")) <= STUB_MAX_BYTES:
+        stripped = re.sub(r"/\*.*?\*/|//[^\n]*", "", text, flags=re.DOTALL).strip()
+        if not stripped or re.fullmatch(
+            r"(?:int|void)\s+main\s*\(\s*(?:void)?\s*\)\s*\{\s*"
+            r"(?:(?:while\s*\(\s*1\s*\)|for\s*\(\s*;\s*;\s*\))\s*\{\s*\}\s*)?"
+            r"(?:return\s+0\s*;\s*)?\}",
+            stripped,
+        ):
+            return "stub"
     return "custom"
 
 
@@ -348,7 +354,7 @@ def _insertion_lines(module: str, *, rtos: bool) -> list[dict[str, str]]:
         {"block": "Includes", "code": f'#include "app_{module}.h"', "reason": "Include app module API."},
         {"block": "2", "code": f"app_{module}_init();", "reason": "Initialize app module after CubeMX init."},
         {"block": "2", "code": f"app_{module}_start();", "reason": "Start the app module."},
-        {"block": "4", "code": f"app_{module}_task(NULL);", "reason": "Run the app module task loop."},
+        {"block": "3", "code": f"app_{module}_task(NULL);", "reason": "Run the app module task loop."},
     ]
     return lines
 
@@ -391,6 +397,10 @@ def ensure_compilable(
         result["status"] = "blocked-needs-input"
         result["error"] = "scaffold requires a chip part to infer the HAL header"
         return result
+    if not re.fullmatch(r"[A-Za-z0-9_]+", module):
+        result["status"] = "blocked-needs-input"
+        result["error"] = "scaffold module must contain only letters, digits, and underscores"
+        return result
     try:
         hal_header_for_part(part)
     except ValueError as exc:
@@ -402,16 +412,16 @@ def ensure_compilable(
 
     rtt_h = root / "Core" / "Inc" / "app_rtt.h"
     rtt_c = root / "Core" / "Src" / "app_rtt.c"
-    if not rtt_c.exists():
+    for rtt_path, content in ((rtt_h, render_rtt_h()), (rtt_c, render_rtt_c())):
+        if rtt_path.exists():
+            continue
         try:
-            safe_io.safe_write_text(rtt_h, render_rtt_h(), allowed_roots=allowed_roots)
-            safe_io.safe_write_text(rtt_c, render_rtt_c(), allowed_roots=allowed_roots)
-            result["files_written"].extend([str(rtt_h), str(rtt_c)])
-            result["actions"].append(
-                "created Core/{Inc,Src}/app_rtt.{h,c} (RTT observability; probe-rs/pyOCD auto-discover)"
-            )
-        except Exception as exc:  # noqa: BLE001
-            result["files_skipped"].append({"path": str(rtt_c), "reason": str(exc)})
+            safe_io.safe_write_text(rtt_path, content, allowed_roots=allowed_roots)
+            result["files_written"].append(str(rtt_path))
+            result["actions"].append(f"created {rtt_path.relative_to(root)} (RTT observability)")
+        except (OSError, ValueError) as exc:
+            result["status"] = "error"
+            result["files_skipped"].append({"path": str(rtt_path), "reason": str(exc)})
 
     if rtos:
         freertos_cfg = root / "Core" / "Inc" / "FreeRTOSConfig.h"
@@ -422,7 +432,8 @@ def ensure_compilable(
                 )
                 result["files_written"].append(str(freertos_cfg))
                 result["actions"].append("created Core/Inc/FreeRTOSConfig.h (CMSIS-RTOS v1)")
-            except Exception as exc:  # noqa: BLE001
+            except (OSError, ValueError) as exc:
+                result["status"] = "error"
                 result["files_skipped"].append({"path": str(freertos_cfg), "reason": str(exc)})
 
     main_h = root / "Core" / "Inc" / "main.h"
@@ -431,7 +442,8 @@ def ensure_compilable(
             safe_io.safe_write_text(main_h, render_main_h(part), allowed_roots=allowed_roots)
             result["files_written"].append(str(main_h))
             result["actions"].append("created main.h")
-        except Exception as exc:  # noqa: BLE001
+        except (OSError, ValueError) as exc:
+            result["status"] = "error"
             result["files_skipped"].append({"path": str(main_h), "reason": str(exc)})
 
     main_c = root / "Core" / "Src" / "main.c"
@@ -442,11 +454,17 @@ def ensure_compilable(
             )
             result["files_written"].append(str(main_c))
             result["actions"].append("created main.c calling app module")
-        except Exception as exc:  # noqa: BLE001
+        except (OSError, ValueError) as exc:
+            result["status"] = "error"
             result["files_skipped"].append({"path": str(main_c), "reason": str(exc)})
         return result
 
-    original = main_c.read_text(encoding="utf-8", errors="replace")
+    try:
+        original = main_c.read_text(encoding="utf-8")
+    except (OSError, ValueError) as exc:
+        result["status"] = "error"
+        result["files_skipped"].append({"path": str(main_c), "reason": str(exc)})
+        return result
     kind = classify_main_c(original)
     result["main_c_class"] = kind
     if kind == "stub":
@@ -456,9 +474,22 @@ def ensure_compilable(
             )
             result["files_written"].append(str(main_c))
             result["actions"].append("replaced stub main.c with generated main calling app module")
-        except Exception as exc:  # noqa: BLE001
+        except (OSError, ValueError) as exc:
+            result["status"] = "error"
             result["files_skipped"].append({"path": str(main_c), "reason": str(exc)})
     elif kind == "cubemx":
+        missing_blocks = [
+            item["block"] for item in _insertion_lines(module, rtos=False)
+            if not firmware_code_patcher.user_code_block_exists(original, item["block"])
+        ]
+        if rtos or missing_blocks:
+            if result["status"] == "ok":
+                result["status"] = "needs-manual-integration"
+            result["actions"].append(
+                "CubeMX main.c left untouched; integrate RTOS task creation manually"
+                if rtos else "CubeMX main.c left untouched; missing blocks: " + ", ".join(missing_blocks)
+            )
+            return result
         updated, applied = _apply_cubemx_insertions(original, module)
         if applied:
             try:
@@ -470,15 +501,14 @@ def ensure_compilable(
                     "inserted app include/init/start/task into CubeMX USER CODE blocks: "
                     + ", ".join(f"{item['block']}:{item['code']}" for item in applied)
                 )
-            except Exception as exc:  # noqa: BLE001
+            except (OSError, ValueError) as exc:
+                result["status"] = "error"
                 result["files_skipped"].append({"path": str(main_c), "reason": str(exc)})
         else:
-            missing_blocks = [
-                item["block"] for item in _insertion_lines(module, rtos=False)
-                if not firmware_code_patcher.user_code_block_exists(original, item["block"])
-            ]
-            result["actions"].append("app already integrated or blocks missing: " + ", ".join(missing_blocks))
+            result["actions"].append("app already integrated")
     else:
+        if result["status"] == "ok":
+            result["status"] = "needs-manual-integration"
         result["actions"].append("custom main.c left untouched; integrate app module manually")
     return result
 

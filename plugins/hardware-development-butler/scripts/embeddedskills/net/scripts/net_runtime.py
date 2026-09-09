@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -17,10 +18,20 @@ STATE_DIR_NAME = ".embeddedskills"
 STATE_FILE_NAME = "state.json"
 PROJECT_CONFIG_FILE = "config.json"
 
-WINDOWS_TOOL_DIRS = [
-    Path(r"C:\Program Files\Wireshark"),
-    Path(r"C:\Program Files (x86)\Wireshark"),
-]
+WINDOWS_TOOL_DIR_NAMES = ("Wireshark",)
+
+
+def _windows_tool_dirs() -> list[Path]:
+    """Return standard program install roots without hardcoding a drive letter."""
+    return [
+        Path(root) / tool_name
+        for root in (
+            os.environ.get("ProgramFiles"),
+            os.environ.get("ProgramFiles(x86)"),
+        )
+        if root
+        for tool_name in WINDOWS_TOOL_DIR_NAMES
+    ]
 
 
 def now_iso() -> str:
@@ -75,7 +86,7 @@ def resolve_tool_path(configured: str | None, default_name: str) -> str:
         if resolved:
             return resolved
 
-    for base_dir in WINDOWS_TOOL_DIRS:
+    for base_dir in _windows_tool_dirs():
         candidate_path = base_dir / default_name
         if candidate_path.exists():
             return str(candidate_path)
