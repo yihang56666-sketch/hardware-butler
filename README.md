@@ -6,6 +6,8 @@
 
 **一个自动化程度高的嵌入式开发助手** — 你说"在 PD12 上让 LED 以 2Hz 闪烁"，它从这一句话开始，自动完成选芯片 → 拉资料 → 配 CubeMX → LLM 写固件代码 → 编译 → 烧录 → 调试观测 → 验证目标 → 失败则自我迭代，直到完成。
 
+> **诚实边界**：非硬件路径（mock workflow、行为验证、门控与回归）已在本仓库完成；**真实板卡烧录闭环未在本材料宣称完成**。确认 token 是 plan 字段完整性绑定，不是独立的人工授权。无 LLM 配置时优化循环不会盲重试。
+
 A safety-first embedded hardware copilot that turns board evidence, CubeMX projects, firmware plans, and bench bring-up into clear, gated next steps.
 
 这是一个面向嵌入式硬件开发的工作区容器，不是单一固件工程。它把项目扫描、CubeMX/构建识别、芯片资料整理、固件代码生成、台架预检、安全门控和 LLM 自主迭代放在同一个 9 阶段工作流里。
