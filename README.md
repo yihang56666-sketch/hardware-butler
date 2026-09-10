@@ -2,7 +2,7 @@
 
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-924%20passed%2C%206%20skipped-brightgreen)](#verification)
+[![Tests](https://img.shields.io/badge/tests-1017%20passed%2C%2012%20skipped-brightgreen)](#verification)
 
 **一个自动化程度高的嵌入式开发助手** — 你说"在 PD12 上让 LED 以 2Hz 闪烁"，它从这一句话开始，自动完成选芯片 → 拉资料 → 配 CubeMX → LLM 写固件代码 → 编译 → 烧录 → 调试观测 → 验证目标 → 失败则自我迭代，直到完成。
 
@@ -71,6 +71,14 @@ python tools\hardware_butler.py next-step --root <project-root> --json
 想先理解整体结构，可以看一页版 [docs/ARCHITECTURE_MAP.md](docs/ARCHITECTURE_MAP.md)。
 安装方式和 runtime 选择见 [docs/INSTALL.md](docs/INSTALL.md)。
 想把一块板子从资料、CubeMX、固件到台架安全完整理解，走 [docs/HARDWARE_UNDERSTANDING.md](docs/HARDWARE_UNDERSTANDING.md)。
+
+### About `embeddedskills/`
+
+根目录 `embeddedskills/` **作为独立仓库维护**（有自己的 `.git`），父仓 clone 后**可能没有这个目录**——这是预期行为，不是安装失败：
+
+- 默认使用打包镜像 `plugins/hardware-development-butler/scripts/embeddedskills/`，GitHub checkout 可直接跑；
+- 本地开发可再把独立 checkout 放到根目录 `embeddedskills/`，或用 `HW_BUTLER_EMBEDDEDSKILLS_ROOT` 指向外部路径；
+- 运行时查找顺序：env override → 根目录 → 插件镜像。详见 [docs/INSTALL.md](docs/INSTALL.md)。
 
 ## One-Command Workflow (P3)
 

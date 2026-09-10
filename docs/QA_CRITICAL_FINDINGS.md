@@ -1,3 +1,5 @@
+> ⚠️ SUPERSEDED：本文件为历史 QA 快照，结论可能已过时。以最新 pytest 实测与 PROJECT_PORTFOLIO_AUDIT.md 为准。
+
 # Critical Issues Found by QA Agent
 
 ## 🔴 Active Bugs Found
