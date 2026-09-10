@@ -64,6 +64,9 @@ fixture + mock workflow + 行为验证分层；真板日流程单独记录。
 **token 是不是人工确认？**  
 不是。它是计划字段的完整性绑定（keyless SHA256）。SECURITY.md 明确区分「防篡改」≠「人工授权」。这是威胁建模上的诚实。
 
+**优化循环真的会自我迭代吗？**  
+只有配置了 LLM 并返回可应用 patch 时才会 reset 后重试；无 LLM 时不会盲重试同一输入，而是直接暴露失败。
+
 **embeddedskills 为什么 clone 后没有？**  
 父仓把它当独立仓库维护；公开可用 `plugins/hardware-development-butler/scripts/embeddedskills/` 镜像。README 已写清。
 

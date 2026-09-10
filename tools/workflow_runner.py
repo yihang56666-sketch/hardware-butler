@@ -385,6 +385,14 @@ def run_workflow(root: Path, state: dict[str, Any]) -> dict[str, Any]:
                             state["updated_at"] = _now_iso()
                             write_workflow_state(root, state)
                             return state
+                        if analysis.get("status") == "no-llm":
+                            # Without an LLM there is nothing to patch — retrying the
+                            # same inputs is a blind loop. Surface the failure instead.
+                            state["status"] = "failed"
+                            state["updated_at"] = _now_iso()
+                            state["last_analysis"] = analysis
+                            write_workflow_state(root, state)
+                            return state
                         state["status"] = "retrying"
                         state["updated_at"] = _now_iso()
                         state["last_analysis"] = analysis
@@ -400,8 +408,6 @@ def run_workflow(root: Path, state: dict[str, Any]) -> dict[str, Any]:
                 state["current_stage"] = ""
                 state["updated_at"] = _now_iso()
                 write_workflow_state(root, state)
-                return state
-            if not progress:
                 return state
     return state
 
@@ -1580,9 +1586,11 @@ def _measure_toggle_frequency(capture: str, *, kind: str) -> float | None:
 
     # Method 2: count repeated markers, divide by observe window
     marker_count = 0
+    marker_re = _marker_pattern(event_marker)
+    toggle_re = _marker_pattern("toggle")
     for line in capture.splitlines():
         lowered = line.lower()
-        if event_marker in lowered or "toggle" in lowered:
+        if marker_re.search(lowered) or toggle_re.search(lowered):
             marker_count += 1
     if marker_count < 4:
         return None
@@ -1711,10 +1719,9 @@ def _verify_signal(expected: dict[str, Any], observed_capture: str) -> dict[str,
         # not a string match.
         measured = _measure_toggle_frequency(observed_capture, kind=kind)
         if measured is not None:
-            # Allow ±50% tolerance: a 2Hz signal captured for 8s should give
-            # 12-20 toggles; MCU clock drift + capture window edges justify a
-            # wide band. The point is to PROVE the signal is oscillating at
-            # the right order of magnitude, not to nail the exact rate.
+            # Accept measured frequency in [0.5x, 2.0x] of the expected rate.
+            # MCU clock drift + capture window edges justify a wide band; the
+            # point is to prove oscillation at the right order of magnitude.
             lower = freq_hz * 0.5
             upper = freq_hz * 2.0
             if lower <= measured <= upper:

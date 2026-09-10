@@ -85,3 +85,20 @@ def test_measure_toggle_frequency_two_events() -> None:
     measured = wr._measure_toggle_frequency(capture, kind="led")
     assert measured is not None
     assert 0.9 <= measured <= 1.1
+
+
+def test_measure_toggle_frequency_rejects_on_substring_false_positives() -> None:
+    """Bare substring 'on' in communication/configuration must not count as LED toggles."""
+    capture = "\n".join(
+        [
+            "communication channel ready",
+            "configuration loaded",
+            "monitor session started",
+            "button debounce window",
+            "action queue empty",
+            "only debug output enabled",
+            "session token refreshed",
+            "system power state unknown",
+        ]
+    )
+    assert wr._measure_toggle_frequency(capture, kind="led") is None

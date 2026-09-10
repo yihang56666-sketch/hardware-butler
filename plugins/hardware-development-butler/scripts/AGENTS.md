@@ -63,7 +63,7 @@ python nextboard/tests/validate.py
 
 ## GUI & 插件
 
-- GUI: `python gui/hardware_agent_ui.py`（PyQt6）。**不要用** `launch_gui.py`（路径硬编码错误）。
+- GUI: `python gui/hardware_agent_ui.py`（PyQt6）。也可用根目录 `launch_gui.py`（已改为基于文件路径解析，无硬编码）。
 - Codex 插件: `plugins/hardware-development-butler/`
 - 重新打包: `python tools/package_hardware_butler_plugin.py`
 - 校验: `python plugins/hardware-development-butler/scripts/validate_package.py`

@@ -253,8 +253,8 @@ def test_verify_goal_behavior_keyword_match(cubemx_basic_fixture: Path, tmp_path
     assert verify_stage["evidence"]["unmet"] == [] if "unmet" in verify_stage["evidence"] else True
 
 
-def test_optimize_loop_retries_when_verify_goal_fails(cubemx_basic_fixture: Path, tmp_path: Path, monkeypatch) -> None:
-    """verify-goal failure must reset firmware-plan..verify-goal and retry."""
+def test_optimize_loop_fails_fast_when_no_llm(cubemx_basic_fixture: Path, tmp_path: Path, monkeypatch) -> None:
+    """Without an LLM, verify-goal failure must not blind-retry the same inputs."""
     import workflow_runner as wr_mod
 
     project = _copy_fixture(cubemx_basic_fixture, tmp_path)
@@ -274,6 +274,38 @@ def test_optimize_loop_retries_when_verify_goal_fails(cubemx_basic_fixture: Path
     monkeypatch.setattr(wr_mod, "_llm_analyze_failure_and_patch", lambda root, state, stage: {"status": "no-llm"})
     result = wr.run_workflow(project, state)
 
+    assert result["status"] == "failed"
+    verify_stage = next(s for s in result["stages"] if s["id"] == "verify-goal")
+    assert verify_stage["attempts"] == 1
+    assert call_count["n"] == 1
+    assert result.get("last_analysis", {}).get("status") == "no-llm"
+
+
+def test_optimize_loop_retries_when_llm_reports_patch(cubemx_basic_fixture: Path, tmp_path: Path, monkeypatch) -> None:
+    """When LLM analysis yields a patchable status, the loop may retry."""
+    import workflow_runner as wr_mod
+
+    project = _copy_fixture(cubemx_basic_fixture, tmp_path)
+    ctx = wr.WorkflowContext(feature="led-blink", pin="PD12", function="gpio-output")
+    state = wr.init_workflow(project, intent="develop-feature", goal="LED blink", context=ctx)
+
+    original_verify = wr_mod._stage_verify_goal
+    call_count = {"n": 0}
+
+    def flaky_verify(root, ctx_arg, state_arg):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            return wr_mod.StageResult(status="failed", evidence={"goal": state_arg.get("goal", "")}, error="unmet signals: led")
+        return original_verify(root, ctx_arg, state_arg)
+
+    monkeypatch.setattr(wr_mod, "_stage_verify_goal", flaky_verify)
+    monkeypatch.setattr(
+        wr_mod,
+        "_llm_analyze_failure_and_patch",
+        lambda root, state, stage: {"status": "patched", "patch_fields": {"goal": "LED blink on PD12"}},
+    )
+    result = wr.run_workflow(project, state)
+
     assert result["status"] == "completed"
     verify_stage = next(s for s in result["stages"] if s["id"] == "verify-goal")
     assert verify_stage["attempts"] == 2
@@ -281,7 +313,7 @@ def test_optimize_loop_retries_when_verify_goal_fails(cubemx_basic_fixture: Path
 
 
 def test_optimize_loop_gives_up_after_max_attempts(cubemx_basic_fixture: Path, tmp_path: Path, monkeypatch) -> None:
-    """If verify-goal keeps failing, MAX_STAGE_ATTEMPTS bounds the loop."""
+    """If verify-goal keeps failing with LLM analysis, MAX_STAGE_ATTEMPTS bounds the loop."""
     import workflow_runner as wr_mod
 
     project = _copy_fixture(cubemx_basic_fixture, tmp_path)
@@ -292,7 +324,11 @@ def test_optimize_loop_gives_up_after_max_attempts(cubemx_basic_fixture: Path, t
         return wr_mod.StageResult(status="failed", evidence={}, error="unmet signals: led")
 
     monkeypatch.setattr(wr_mod, "_stage_verify_goal", always_fail)
-    monkeypatch.setattr(wr_mod, "_llm_analyze_failure_and_patch", lambda root, state, stage: {"status": "no-llm"})
+    monkeypatch.setattr(
+        wr_mod,
+        "_llm_analyze_failure_and_patch",
+        lambda root, state, stage: {"status": "patched", "patch_fields": {"goal": "LED blink again"}},
+    )
     result = wr.run_workflow(project, state)
 
     assert result["status"] == "failed"
