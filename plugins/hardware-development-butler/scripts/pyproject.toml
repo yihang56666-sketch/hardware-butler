@@ -93,7 +93,7 @@ testpaths = ["tests"]
 python_files = ["test_*.py", "*_test.py", "validate_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-addopts = "-v -p no:cacheprovider --cov=tools --cov=embeddedskills --cov-report=term-missing"
+addopts = "-v -p no:cacheprovider -p no:embedded --cov=tools --cov=embeddedskills --cov-report=term-missing"
 markers = [
     "hardware: tests that require connected probes, boards, or physical interfaces",
     "enable_platformio: tests that re-enable PlatformIO detection (most tests disable it)",

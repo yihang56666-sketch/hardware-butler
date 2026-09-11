@@ -1,6 +1,6 @@
 # Hardware Butler 硬件 Agent HR 面试指导书
 
-更新：2026-09-30。测试口径：**1017 passed / 12 skipped**。真实板卡仍未在本材料中证明。
+更新：2026-09-11。测试口径：**1013 passed / 12 skipped**。真实板卡仍未在本材料中证明。
 
 ## 一句话介绍
 
@@ -8,7 +8,7 @@ Hardware Butler 是安全优先的嵌入式开发助手：把一句话硬件需�
 
 ## 30 秒说法
 
-> 我做的是嵌入式工作流 Agent。说「在 PD12 上让 LED 以 2Hz 闪烁」，它会走九个阶段；默认 mock 不碰硬件，真实烧录必须环境变量、确认 token、值域检查和固件 hash 同时通过。LLM 只产结构化意图，执行器和门控是确定性代码。非硬件路径 1017 个单测回归通过。
+> 我做的是嵌入式工作流 Agent。说「在 PD12 上让 LED 以 2Hz 闪烁」，它会走九个阶段；默认 mock 不碰硬件，真实烧录必须环境变量、确认 token、值域检查和固件 hash 同时通过。LLM 只产结构化意图，执行器和门控是确定性代码。最近一轮回归为 1013 passed / 12 skipped。
 
 ## 架构怎么讲
 
@@ -70,7 +70,7 @@ fixture + mock workflow + 行为验证分层；真板日流程单独记录。
 **embeddedskills 为什么 clone 后没有？**  
 父仓把它当独立仓库维护；公开可用 `plugins/hardware-development-butler/scripts/embeddedskills/` 镜像。README 已写清。
 
-**1017 个测试证明什么？**  
+**这组测试证明什么？**\
 证明非硬件路径（编排、adapter、门控、LLM client、验证器）可回归；不证明探针/供电/真编译器环境。
 
 **为什么 LLM 要 4 种 provider？**  
@@ -84,4 +84,4 @@ fixture + mock workflow + 行为验证分层；真板日流程单独记录。
 
 ## 简历可用句
 
-实现安全优先的嵌入式工作流 Agent Hardware Butler：9 阶段可 resume 编排、14 厂商族适配、5 层行为验证、多层硬件门控；LLM 仅产出结构化意图。非硬件路径 1017 单测、ruff/mypy 全绿。
+实现安全优先的嵌入式工作流 Agent Hardware Butler：9 阶段可 resume 编排、14 厂商族适配、5 层行为验证、多层硬件门控；LLM 仅产出结构化意图。最近一轮回归 1013 passed / 12 skipped，ruff/mypy 全绿。

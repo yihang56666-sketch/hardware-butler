@@ -346,7 +346,6 @@ def run_workflow(root: Path, state: dict[str, Any]) -> dict[str, Any]:
                     write_workflow_state(root, state)
                     break
         else:
-            progress = False
             for stage in state["stages"]:
                 if stage["status"] == "completed":
                     continue
@@ -374,7 +373,6 @@ def run_workflow(root: Path, state: dict[str, Any]) -> dict[str, Any]:
                 stage["evidence"] = result.evidence
                 state["updated_at"] = _now_iso()
                 write_workflow_state(root, state)
-                progress = True
                 if result.status != "completed":
                     # P3 Step G: optimize-loop triggers on build failure AND verify-goal
                     # failure. Both need LLM analysis to suggest context patches.

@@ -23,7 +23,7 @@ test work blocks that.
 - **Backends**: Keil/GCC/EIDE build, J-Link/OpenOCD/probe-rs/pyOCD flash, serial/CAN/net/QEMU observe.
 - **Real-mode gating intact**: `HARDWARE_BUTLER_ENABLE_REAL_FLASH=1` + goal_token + value-sanity checks.
 - **Plugin-sync pre-commit hook**: `tools/install_plugin_sync_hook.py` auto-syncs `plugins/.../scripts/` on commit when source changes.
-- **Test baseline**: **1017 passed / 12 skipped**, ruff + mypy clean on tools/ (refreshed 2026-09-09; 805/10 at the Phase 14 snapshot).
+- **Test baseline**: **1013 passed / 12 skipped**, ruff + mypy clean on tools/ (refreshed 2026-09-11; 805/10 at the Phase 14 snapshot).
 - **Docs**: HANDOFF §1-22, CHANGELOG Unreleased section, `docs/REAL_BOARD_DAY_RUNBOOK.md` board-day-only checklist.
 
 ## Phase Map (final)

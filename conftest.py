@@ -99,21 +99,23 @@ def temp_workspace(tmp_path: Path) -> Path:
     return workspace
 
 
-def _pytest_embedded_installed() -> bool:
-    """Return True when the pytest-embedded plugin is importable.
+def _pytest_embedded_plugin_active(pluginmanager: pytest.PytestPluginManager) -> bool:
+    """Return True when the pytest-embedded plugin is active.
 
     pytest-embedded already registers ``--target`` and ``--port`` (and a real
-    ``dut`` fixture). When it is present we must not re-register those options
+    ``dut`` fixture). When it is active we must not re-register those options
     or pytest aborts with an argparse conflict; we only add our own
-    ``--run-hardware`` gate. When it is absent we provide lightweight fallbacks
-    so the hardware suite stays collectable.
+    ``--run-hardware`` gate. The project's default addopts disables the plugin
+    because its 2.8 fixture setup emits experimental-API warnings that turn
+    into setup errors under ``-W error``; local fixtures provide fallbacks so
+    hardware tests remain collectable.
     """
-    import importlib.util
-
-    return importlib.util.find_spec("pytest_embedded") is not None
+    return pluginmanager.hasplugin("pytest_embedded")
 
 
-def pytest_addoption(parser: pytest.Parser) -> None:
+def pytest_addoption(
+    parser: pytest.Parser, pluginmanager: pytest.PytestPluginManager
+) -> None:
     """Register opt-in switches for tests with physical side effects.
 
     ``pytest_addoption`` is only honoured in the rootdir ``conftest.py`` (or a
@@ -126,7 +128,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default=False,
         help="Run tests marked hardware. These may require connected probes or boards.",
     )
-    if _pytest_embedded_installed():
+    if _pytest_embedded_plugin_active(pluginmanager):
         # pytest-embedded owns --target/--port; re-registering them would make
         # pytest fail to start with an argparse conflict.
         return

@@ -2,7 +2,7 @@
 
 | 项目 | 当前判断 | 已验证证据 | 仍需人工验收 |
 | --- | --- | --- | --- |
-| Hardware Butler | 非硬件路径完整，插件镜像已同步 | `pytest -q -W error`：1017 passed、12 skipped；`ruff check .` 通过；`mypy tools/ --config-file mypy.ini` 对 72 个源文件通过；插件校验 4/4 通过 | 真实板卡、探针、编译器、供电和串口现场环境 |
+| Hardware Butler | 非硬件路径完整，插件镜像已同步 | `pytest -q -p no:embedded -W error`：1013 passed、12 skipped；`ruff check .` 通过；`mypy tools/ --config-file mypy.ini` 对 72 个源文件通过；插件校验 4/4 通过 | 真实板卡、探针、编译器、供电和串口现场环境 |
 
 ## 本次核对记录
 
@@ -13,3 +13,4 @@
 - 2026-09-05：核对 `gui/hardware_agent_ui.py` 的 `addTab` 调用，GUI 为 13 个 tab，HR 指导书已同步。
 - 2026-09-05：确认 `origin` 指向 `yihang56666-sketch/hardware-butler`；README 的当前仓库链接保持一致。
 - 2026-09-05：主 README 与 HR 指导书更新后通过插件同步脚本检查，避免插件副本文档漂移。
+- 2026-09-11：完整测试口径刷新为 1013 passed、12 skipped；README、HR 指导书与插件镜像同步，真实板卡流程仍未执行。
